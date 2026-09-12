@@ -110,10 +110,7 @@ describe("layoutRiskGraph", () => {
     const { positions, demotedEdgeIds } = layoutRiskGraph(
       graphOf(
         [node("risk:1", "P1"), node("risk:2", "P2"), node("risk:3", "C")],
-        [
-          inh(1, "suggested", "risk:3", "risk:1", 9),
-          inh(2, "confirmed", "risk:3", "risk:2", 0),
-        ],
+        [inh(1, "suggested", "risk:3", "risk:1", 9), inh(2, "confirmed", "risk:3", "risk:2", 0)],
       ),
     );
 

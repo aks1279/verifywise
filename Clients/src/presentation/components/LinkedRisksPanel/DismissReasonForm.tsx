@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Button, FormControlLabel, Radio, RadioGroup, Stack, TextField } from "@mui/material";
+import { FormControlLabel, Radio, RadioGroup, Stack } from "@mui/material";
+import { CustomizableButton } from "../button/customizable-button";
+import Field from "../Inputs/Field";
 import { DismissReason, RiskLink } from "../../../domain/interfaces/i.riskLink";
 
 /**
@@ -58,7 +60,7 @@ export default function DismissReasonForm({
   };
 
   return (
-    <Stack spacing={1} sx={{ pl: 2, py: 1 }}>
+    <Stack spacing={4} sx={{ pl: 8, py: 4 }}>
       {/*
         Named after the risk: several of these can be on screen at once in a
         long list, and "Other" alone is not a distinguishable label.
@@ -79,29 +81,30 @@ export default function DismissReasonForm({
       </RadioGroup>
 
       {reason === "other" && (
-        <TextField
+        <Field
+          id={`dismiss-note-${link.id}`}
           label="What happened?"
-          size="small"
           multiline
           minRows={2}
           value={note}
-          onChange={(event) => setNote(event.target.value)}
-          inputProps={{ maxLength: NOTE_MAX_LENGTH }}
+          // Field owns its inputProps, so the cap lives here rather than on the input.
+          onChange={(event) => setNote(event.target.value.slice(0, NOTE_MAX_LENGTH))}
         />
       )}
 
-      <Stack direction="row" spacing={1}>
-        <Button
+      <Stack direction="row" spacing={4}>
+        <CustomizableButton
           size="small"
           variant="contained"
-          disabled={pending || noteMissing}
+          color="primary"
+          isDisabled={pending || noteMissing}
           onClick={handleSubmit}
         >
           Dismiss
-        </Button>
-        <Button size="small" onClick={onCancel}>
+        </CustomizableButton>
+        <CustomizableButton size="small" variant="text" color="secondary" onClick={onCancel}>
           Cancel
-        </Button>
+        </CustomizableButton>
       </Stack>
     </Stack>
   );

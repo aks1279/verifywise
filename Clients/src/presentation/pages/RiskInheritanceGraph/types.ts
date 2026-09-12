@@ -28,8 +28,8 @@ export const ENTITY_TYPE_COLORS: Record<RiskLinkEntityType, string> = {
 
 // Edge labels shown on the canvas
 export const EDGE_LABELS = {
-  inherits: "inherits",
-  suggested: "suggested",
-  competing: "competing",
-  related: "related",
+  inherits: "Inherits",
+  suggested: "Suggested",
+  competing: "Competing",
+  related: "Related",
 } as const;

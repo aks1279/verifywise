@@ -14,9 +14,19 @@ import type {
   RiskGraphNodeKey,
 } from "../../../domain/interfaces/i.riskLink";
 
-export const COL_W = 300;
-export const ROW_H = 190;
-export const GROUP_GAP = 80;
+// Node maxWidth is 220 (RiskNode), so COL_W - 220 is the horizontal gutter and
+// ROW_H - node height is the vertical one. Widened because a dense graph reads
+// as a solid band of edges when the rows sit close together.
+export const COL_W = 340;
+
+/**
+ * Loose risks used to sit on one row, which made the canvas as wide as the risk
+ * count and unreadable at any zoom that fit it. Roughly 2:1 suits a landscape
+ * canvas better than a square block does.
+ */
+export const looseColumns = (count: number) => Math.max(1, Math.ceil(Math.sqrt(count * 2)));
+export const ROW_H = 280;
+export const GROUP_GAP = 140;
 
 export interface RiskGraphLayout {
   positions: Map<RiskGraphNodeKey, { x: number; y: number }>;
@@ -105,8 +115,12 @@ export function layoutRiskGraph(graph: RiskGraph): RiskGraphLayout {
   const loose = graph.nodes
     .filter((n) => !positions.has(n.key))
     .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "") || (a.key < b.key ? -1 : 1));
+  const looseCols = looseColumns(loose.length);
   loose.forEach((node, i) => {
-    positions.set(node.key, { x: i * COL_W, y: ROW_H * 2 });
+    positions.set(node.key, {
+      x: (i % looseCols) * COL_W,
+      y: ROW_H * 2 + Math.floor(i / looseCols) * ROW_H,
+    });
   });
 
   return { positions, demotedEdgeIds };

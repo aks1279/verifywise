@@ -1,15 +1,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  Chip,
-  FormControlLabel,
-  Radio,
-  RadioGroup,
-  Stack,
-} from "@mui/material";
+import { Alert, FormControlLabel, Radio, RadioGroup, Stack } from "@mui/material";
 import AutoCompleteField from "../Inputs/Autocomplete";
+import Chip from "../Chip";
+import { CustomizableButton } from "../button/customizable-button";
 import { getAllProjectRisks } from "../../../application/repository/projectRisk.repository";
 import { getAllVendorRisks } from "../../../application/repository/vendorRisk.repository";
 import { getAllEntities } from "../../../application/repository/entity.repository";
@@ -188,7 +182,11 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
         : source === "model_risk"
           ? { sourceRiskId: riskId, targetModelRiskId: partner.id, relationType: "inherits_from" }
           : source === "vendor_risk"
-            ? { sourceRiskId: riskId, targetVendorRiskId: partner.id, relationType: "inherits_from" }
+            ? {
+                sourceRiskId: riskId,
+                targetVendorRiskId: partner.id,
+                relationType: "inherits_from",
+              }
             : { sourceRiskId: riskId, targetRiskId: partner.id, relationType: choice };
 
     createLink.mutate(input, {
@@ -203,8 +201,12 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
   };
 
   return (
-    <Stack spacing={2} sx={{ py: 1 }}>
-      <RadioGroup row value={choice} onChange={(event) => handleChoice(event.target.value as Choice)}>
+    <Stack spacing={4} sx={{ py: 4 }}>
+      <RadioGroup
+        row
+        value={choice}
+        onChange={(event) => handleChoice(event.target.value as Choice)}
+      >
         {CHOICES.map(({ value, label }) => (
           <FormControlLabel
             key={value}
@@ -223,12 +225,7 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
           onChange={(event) => handleSource(event.target.value as ParentSource)}
         >
           {PARENT_SOURCES.map(({ value, label }) => (
-            <FormControlLabel
-              key={value}
-              value={value}
-              control={<Radio />}
-              label={label}
-            />
+            <FormControlLabel key={value} value={value} control={<Radio />} label={label} />
           ))}
         </RadioGroup>
       )}
@@ -246,7 +243,7 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
             <li {...props} key={`${source}:${option.id}`}>
               <Stack
                 direction="row"
-                spacing={1}
+                spacing={4}
                 alignItems="center"
                 sx={{ width: "100%", justifyContent: "space-between" }}
               >
@@ -254,6 +251,8 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
                 {shared && shared.length > 0 && (
                   <Chip
                     size="small"
+                    variant="default"
+                    uppercase={false}
                     label={
                       shared.length > 1
                         ? `Same project: ${shared[0]} +${shared.length - 1}`
@@ -274,18 +273,19 @@ export default function LinkRiskForm({ riskId, existingLinks, onClose }: LinkRis
 
       {error && <Alert severity="error">{error}</Alert>}
 
-      <Stack direction="row" spacing={1}>
-        <Button
+      <Stack direction="row" spacing={4}>
+        <CustomizableButton
           size="small"
           variant="contained"
-          disabled={!partner || createLink.isPending}
+          color="primary"
+          isDisabled={!partner || createLink.isPending}
           onClick={handleSubmit}
         >
           Link
-        </Button>
-        <Button size="small" onClick={onClose}>
+        </CustomizableButton>
+        <CustomizableButton size="small" variant="text" color="secondary" onClick={onClose}>
           Cancel
-        </Button>
+        </CustomizableButton>
       </Stack>
     </Stack>
   );

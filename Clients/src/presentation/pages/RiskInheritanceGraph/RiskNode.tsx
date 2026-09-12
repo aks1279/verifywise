@@ -9,8 +9,10 @@
 
 import React, { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Box, Chip, Typography, useTheme } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
+import Chip from "../../components/Chip";
 import { ENTITY_TYPE_LABELS } from "../../../domain/interfaces/i.riskLink";
+import { textStyles } from "../../themes/typography";
 import VWTooltip from "../../components/VWTooltip";
 import type { RiskInheritanceNodeData } from "./types";
 import { ENTITY_TYPE_COLORS } from "./types";
@@ -21,7 +23,7 @@ const MAX_NAME_LENGTH = 30;
 const truncateName = (name: string): string =>
   name.length > MAX_NAME_LENGTH ? `${name.slice(0, MAX_NAME_LENGTH)}…` : name;
 
-const RiskNode: React.FC<NodeProps> = ({ data }) => {
+const RiskNode: React.FC<NodeProps> = ({ data, selected }) => {
   const theme = useTheme();
   const nodeData = data as unknown as RiskInheritanceNodeData;
   const color = ENTITY_TYPE_COLORS[nodeData.entityType];
@@ -35,13 +37,16 @@ const RiskNode: React.FC<NodeProps> = ({ data }) => {
           nodeData.riskLevel ? `. Risk level: ${nodeData.riskLevel}` : ""
         }${nodeData.staleSince ? ". Parent level changed." : ""}`}
         sx={{
-          "bgcolor": "common.white",
-          "border": `2px solid ${color}`,
-          "borderRadius": 1,
+          "bgcolor": "background.main",
+          // Selected takes the interactive-card treatment: border to primary,
+          // the elevated shadow. The entity-type colour still reads on the handles.
+          "border": `2px solid ${selected ? theme.palette.primary.main : color}`,
+          "borderRadius": "4px",
           "padding": "8px 12px",
           "minWidth": 130,
           "maxWidth": 220,
-          "boxShadow": 1,
+          "boxShadow": selected ? theme.boxShadow : "none",
+          "transition": "box-shadow 0.2s ease",
           "&:focus-visible": {
             outline: `2px solid ${theme.palette.primary.main}`,
             outlineOffset: 2,
@@ -54,12 +59,10 @@ const RiskNode: React.FC<NodeProps> = ({ data }) => {
           style={{ background: color, border: "none", width: 8, height: 8 }}
         />
 
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
           <Typography
-            variant="body2"
             sx={{
-              fontWeight: 600,
-              fontSize: theme.typography.caption.fontSize,
+              ...textStyles.subsectionTitle,
               color: "text.primary",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -68,19 +71,21 @@ const RiskNode: React.FC<NodeProps> = ({ data }) => {
           >
             {truncateName(nodeData.name ?? `Risk`)}
           </Typography>
-          {typeLabel && <Chip size="small" variant="outlined" label={typeLabel} />}
+          {typeLabel && <Chip size="small" variant="default" uppercase={false} label={typeLabel} />}
         </Box>
 
         {(nodeData.riskLevel || nodeData.staleSince) && (
-          <Box sx={{ mt: 0.5, display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+          <Box sx={{ mt: 2, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
             {nodeData.riskLevel && <Chip size="small" label={nodeData.riskLevel} />}
             {nodeData.staleSince && (
-              <Chip
-                size="small"
-                color="warning"
-                label="Parent level changed"
+              // VW Chip takes no title, so the native tooltip moves to the wrapper.
+              <Box
+                component="span"
+                sx={{ display: "inline-flex" }}
                 title={new Date(nodeData.staleSince).toLocaleString()}
-              />
+              >
+                <Chip size="small" variant="warning" label="Parent level changed" />
+              </Box>
             )}
           </Box>
         )}
