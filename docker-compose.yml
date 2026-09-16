@@ -9,6 +9,7 @@ services:
       - POSTGRES_USER=$DB_USER
       - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set in the env file before starting}
       - POSTGRES_DB=$DB_NAME
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "$DB_USER", "-d", "$DB_NAME"]
       interval: 5s
@@ -55,11 +56,13 @@ services:
       - EVAL_SERVER_INTERNAL_KEY=${EVAL_SERVER_INTERNAL_KEY:?EVAL_SERVER_INTERNAL_KEY must be set in the env file before starting}
       - SUPERADMIN_EMAIL=$SUPERADMIN_EMAIL
       - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD:?SUPERADMIN_PASSWORD must be set in the env file before starting}
+    restart: unless-stopped
   frontend:
     depends_on:
       - backend
     image: ghcr.io/verifywise-ai/verifywise-frontend:latest
     pull_policy: always
+    restart: unless-stopped
   worker:
     depends_on:
       postgresdb:
@@ -101,6 +104,7 @@ services:
       - AI_GATEWAY_URL=http://ai_gateway:8100
       - AI_GATEWAY_INTERNAL_KEY=${AI_GATEWAY_INTERNAL_KEY:?AI_GATEWAY_INTERNAL_KEY must be set in the env file before starting}
       - EVAL_SERVER_INTERNAL_KEY=${EVAL_SERVER_INTERNAL_KEY:?EVAL_SERVER_INTERNAL_KEY must be set in the env file before starting}
+    restart: unless-stopped
   ai_gateway:
     depends_on:
       postgresdb:
@@ -119,20 +123,6 @@ services:
       - AI_GATEWAY_INTERNAL_KEY=${AI_GATEWAY_INTERNAL_KEY:?AI_GATEWAY_INTERNAL_KEY must be set in the env file before starting}
       - AI_GATEWAY_PORT=8100
       - BACKEND_URL=http://backend:$BACKEND_PORT
-    restart: unless-stopped
-  langfuse:
-    depends_on:
-      postgresdb:
-        condition: service_healthy
-    image: langfuse/langfuse:latest
-    pull_policy: always
-    ports:
-      - "3001:3000"
-    environment:
-      - DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@postgresdb:$DB_PORT/$DB_NAME
-      - NEXTAUTH_SECRET=changeme-langfuse-nextauth-secret
-      - NEXTAUTH_URL=http://localhost:3001
-      - SALT=changeme-langfuse-salt
     restart: unless-stopped
 
 volumes:

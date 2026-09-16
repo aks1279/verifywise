@@ -43,16 +43,14 @@ components:
         - 'High risk'
         - 'Limited risk'
         - 'Minimal risk'
+        - GPAI
+        - 'General Risk'
       description: 'EU AI Act risk classification level'
     HighRiskRole:
       type: string
       enum:
         - Deployer
         - Provider
-        - Distributor
-        - Importer
-        - 'Product manufacturer'
-        - 'Authorized representative'
       description: 'Role of the organization under the EU AI Act for high-risk systems'
     ProjectStatus:
       type: string
@@ -188,6 +186,7 @@ components:
           example: 42
         uc_id:
           type: string
+          nullable: true
           example: UC-7
         project_title:
           type: string
@@ -198,13 +197,35 @@ components:
         start_date:
           type: string
           format: date-time
+          nullable: true
         geography:
           type: integer
+          nullable: true
           example: 1
         ai_risk_classification:
-          $ref: '#/components/schemas/AiRiskClassification'
+          oneOf:
+            -
+              $ref: '#/components/schemas/AiRiskClassification'
+            -
+              type: 'null'
         type_of_high_risk_role:
-          $ref: '#/components/schemas/HighRiskRole'
+          oneOf:
+            -
+              $ref: '#/components/schemas/HighRiskRole'
+            -
+              type: 'null'
+        use_case_category:
+          type: string
+          nullable: true
+        use_case_purpose:
+          type: string
+          nullable: true
+        use_case_audience:
+          type: string
+          nullable: true
+        deployment_context:
+          type: string
+          nullable: true
         goal:
           type: string
           nullable: true
@@ -219,8 +240,10 @@ components:
         last_updated:
           type: string
           format: date-time
+          nullable: true
         last_updated_by:
           type: integer
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -228,16 +251,9 @@ components:
           type: boolean
         is_demo:
           type: boolean
-        approval_workflow_id:
-          type: integer
-          nullable: true
-        pending_frameworks:
+        _source:
           type: string
           nullable: true
-        enable_ai_data_insertion:
-          type: boolean
-        organization_id:
-          type: integer
         framework:
           type: array
           items:
@@ -262,10 +278,6 @@ components:
                 - pending
                 - rejected
                 - null
-            _source:
-              type: string
-              nullable: true
-              example: jira-assets
     ProjectDetail:
       allOf:
         -
@@ -449,13 +461,14 @@ components:
           type: integer
           description: '1=Admin, 2=Reviewer, 3=Editor, 4=Auditor, 5=SuperAdmin'
           example: 1
-        created_at:
+        createdAt:
           type: string
           format: date-time
         last_login:
           type: string
           format: date-time
-        updated_at:
+          nullable: true
+        updatedAt:
           type: string
           format: date-time
         is_demo:
@@ -468,13 +481,22 @@ components:
         profile_photo_id:
           type: integer
           nullable: true
+        sso_provider:
+          type: string
+          nullable: true
+          enum:
+            - AzureAD
+            - null
+        sso_user_id:
+          type: string
+          nullable: true
       required:
         - id
         - name
         - surname
         - email
         - role_id
-        - created_at
+        - createdAt
     StatusEnvelope:
       type: object
       properties:
@@ -837,6 +859,7 @@ components:
         - Pending
         - Blocked
         - Rejected
+        - Retired
       description: 'Current approval/review status of the model'
     Filedata:
       type: object
@@ -1349,9 +1372,12 @@ components:
             - 'Deployment & integration'
             - 'Monitoring & maintenance'
             - 'Decommissioning & retirement'
+            - null
+          nullable: true
         risk_description:
           type: string
           description: 'Detailed description of the risk.'
+          nullable: true
         risk_category:
           type: array
           items:
@@ -1359,10 +1385,13 @@ components:
           description: 'Array of category labels.'
         impact:
           type: string
+          nullable: true
         assessment_mapping:
           type: string
+          nullable: true
         controls_mapping:
           type: string
+          nullable: true
         likelihood:
           type: string
           enum:
@@ -1371,6 +1400,8 @@ components:
             - Possible
             - Likely
             - 'Almost Certain'
+            - null
+          nullable: true
         severity:
           type: string
           enum:
@@ -1379,6 +1410,8 @@ components:
             - Moderate
             - Major
             - Catastrophic
+            - null
+          nullable: true
         risk_level_autocalculated:
           type: string
           enum:
@@ -1388,8 +1421,11 @@ components:
             - 'Medium risk'
             - 'High risk'
             - 'Very high risk'
+            - null
+          nullable: true
         review_notes:
           type: string
+          nullable: true
         mitigation_status:
           type: string
           enum:
@@ -1400,23 +1436,32 @@ components:
             - Deferred
             - Canceled
             - 'Requires review'
+            - null
+          nullable: true
         current_risk_level:
           type: string
           enum:
-            - 'Very Low risk'
+            - 'No risk'
+            - 'Very low risk'
             - 'Low risk'
             - 'Medium risk'
             - 'High risk'
             - 'Very high risk'
+            - null
+          nullable: true
         deadline:
           type: string
           format: date-time
+          nullable: true
         mitigation_plan:
           type: string
+          nullable: true
         implementation_strategy:
           type: string
+          nullable: true
         mitigation_evidence_document:
           type: string
+          nullable: true
         likelihood_mitigation:
           type: string
           enum:
@@ -1425,6 +1470,8 @@ components:
             - Possible
             - Likely
             - 'Almost Certain'
+            - null
+          nullable: true
         risk_severity:
           type: string
           enum:
@@ -1433,16 +1480,22 @@ components:
             - Moderate
             - Major
             - Critical
+            - null
+          nullable: true
         final_risk_level:
           type: string
+          nullable: true
         risk_approval:
           type: integer
           description: 'User ID of the approver.'
+          nullable: true
         approval_status:
           type: string
+          nullable: true
         date_of_assessment:
           type: string
           format: date-time
+          nullable: true
         is_demo:
           type: boolean
           default: false
@@ -1572,6 +1625,19 @@ components:
               items:
                 type: object
             subClauses_27001:
+              type: array
+              items:
+                type: object
+            organization_id:
+              type: integer
+              nullable: true
+            is_deleted:
+              type: boolean
+            deleted_at:
+              type: string
+              format: date-time
+              nullable: true
+            custom_fields:
               type: array
               items:
                 type: object
@@ -3503,6 +3569,8 @@ components:
         - Investigating
         - Mitigated
         - Closed
+        - Suspended
+        - 'Emergency action'
     IncidentApprovalStatus:
       type: string
       enum:
@@ -5601,6 +5669,7 @@ components:
                 - Restricted
                 - Pending
                 - Blocked
+                - Retired
         governance_owner_id:
           type: integer
           minimum: 1
@@ -17055,6 +17124,53 @@ paths:
           description: Unauthorized
         '500':
           description: 'Internal server error'
+  /evidenceHub/settings:
+    get:
+      tags:
+        - Evidence
+      summary: 'Get Evidence Hub Org Settings'
+      description: 'Org-level Evidence Hub retention settings. A missing settings row resolves to defaults (no default retention period, archival off).'
+      operationId: getEvidenceHubSettingsHandler
+      security:
+        -
+          bearerAuth: []
+      responses:
+        '200':
+          description: Success
+        '401':
+          description: Unauthorized
+        '500':
+          description: 'Internal server error'
+    put:
+      tags:
+        - Evidence
+      summary: 'Update Evidence Hub Org Settings'
+      description: 'PARTIAL update. default_retention_period: one of 30_days, 90_days, 6_months, 1_year, 3_years, 5_years, 7_years, indefinite, or null to clear. archive_on_expiry only takes effect when the server also sets EVIDENCE_RETENTION_ARCHIVE_ENABLED=true; archival is a soft archive, never a delete.'
+      operationId: updateEvidenceHubSettingsHandler
+      security:
+        -
+          bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                default_retention_period:
+                  type: string
+                  nullable: true
+                  enum: [30_days, 90_days, 6_months, 1_year, 3_years, 5_years, 7_years, indefinite]
+                archive_on_expiry:
+                  type: boolean
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: 'Bad request'
+        '401':
+          description: Unauthorized
+        '500':
+          description: 'Internal server error'
   /evidenceHub:
     get:
       tags:
@@ -17064,6 +17180,14 @@ paths:
       security:
         -
           bearerAuth: []
+      parameters:
+        -
+          name: includeArchived
+          in: query
+          required: false
+          description: 'Include archived (soft-archived expired) records. Default false.'
+          schema:
+            type: boolean
       responses:
         '200':
           description: Success
@@ -23932,6 +24056,21 @@ paths:
           description: 'Forbidden - insufficient role'
         '500':
           description: 'Internal server error'
+  /super-admin/organizations-with-user:
+    post:
+      summary: 'Create Org With User'
+      responses:
+        '200':
+          description: Success
+        '500':
+          description: 'Internal server error'
+      tags:
+        - 'Super Admin'
+      operationId: createOrgWithUser
+      security:
+        -
+          bearerAuth: []
+      description: 'Requires role: Super Admin'
   '/super-admin/organizations/{id}':
     delete:
       tags:
@@ -24007,6 +24146,21 @@ paths:
           description: 'Forbidden - insufficient role'
         '500':
           description: 'Internal server error'
+  /super-admin/users/exists:
+    get:
+      summary: 'Email Exists'
+      responses:
+        '200':
+          description: Success
+        '500':
+          description: 'Internal server error'
+      tags:
+        - 'Super Admin'
+      operationId: emailExists
+      security:
+        -
+          bearerAuth: []
+      description: 'Requires role: Super Admin'
   /super-admin/users:
     get:
       tags:
@@ -24052,6 +24206,20 @@ paths:
           description: 'Forbidden - insufficient role'
         '500':
           description: 'Internal server error'
+    post:
+      summary: 'Create User In Org'
+      responses:
+        '200':
+          description: Success
+        '500':
+          description: 'Internal server error'
+      tags:
+        - 'Super Admin'
+      operationId: createUserInOrg
+      security:
+        -
+          bearerAuth: []
+      description: 'Requires role: Super Admin'
   '/super-admin/organizations/{id}/invitations':
     get:
       summary: 'List Org Invitations'
