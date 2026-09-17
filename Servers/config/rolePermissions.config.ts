@@ -224,7 +224,11 @@ function buildBuiltinMatrix(): Record<string, ReadonlySet<PermissionKey>> {
   // (e.g. Editor keeps its contributor-tier access, SuperAdmin stays limited
   // to the three super-tier routes).
   const forRole = (role: string): ReadonlySet<PermissionKey> =>
-    new Set(ALL_PERMISSION_KEYS.filter((key) => ROLE_PERMISSIONS[key].legacyRoles.includes(role)));
+    new Set(
+      ALL_PERMISSION_KEYS.filter((key) =>
+        (ROLE_PERMISSIONS[key].legacyRoles as readonly string[]).includes(role),
+      ),
+    );
 
   return {
     Admin: forRole("Admin"),
