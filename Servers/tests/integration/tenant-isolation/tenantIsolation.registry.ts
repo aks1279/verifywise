@@ -121,6 +121,12 @@ export const tenantIsolationRegistry: IsolationEntity[] = [
     baseRoute: "/api/files",
   },
   {
+    name: "file_org_settings",
+    tables: ["file_org_settings"],
+    baseRoute: "/api/file-manager/org-settings",
+    testFile: "file-org-settings.isolation.test.ts",
+  },
+  {
     name: "file_change_history",
     tables: ["file_change_history"],
     baseRoute: "/api/file-change-history",
