@@ -95,7 +95,7 @@ async function loadCustomRolePermissions(
  * This is the single enforcement point behind authorize().
  */
 export async function roleHasPermission(
-  organizationId: number,
+  organizationId: number | null,
   roleName: string,
   permissionKey: PermissionKey,
 ): Promise<boolean> {
@@ -108,8 +108,10 @@ export async function roleHasPermission(
     return BUILTIN_ROLE_PERMISSIONS[role.name]?.has(permissionKey) ?? false;
   }
 
-  // Custom role: only its own org's matrix applies.
-  if (role.organizationId !== organizationId) return false;
+  // Custom role: only its own org's matrix applies. Without org context
+  // (routes mounted without tenant middleware) custom roles cannot resolve
+  // and are denied — these routes are Admin/super-tier only in practice.
+  if (organizationId == null || role.organizationId !== organizationId) return false;
   const permissions = await loadCustomRolePermissions(organizationId, role);
   return permissions.has(permissionKey);
 }
@@ -119,7 +121,7 @@ export async function roleHasPermission(
  * GET endpoints that feed the admin UI and the client's permission context.
  */
 export async function getEffectivePermissions(
-  organizationId: number,
+  organizationId: number | null,
   roleName: string,
 ): Promise<ReadonlySet<string>> {
   const role = await getRoleByName(organizationId, roleName);
@@ -127,7 +129,7 @@ export async function getEffectivePermissions(
   if (role.organizationId === null) {
     return BUILTIN_ROLE_PERMISSIONS[role.name] ?? new Set<string>();
   }
-  if (role.organizationId !== organizationId) return new Set<string>();
+  if (organizationId == null || role.organizationId !== organizationId) return new Set<string>();
   return loadCustomRolePermissions(organizationId, role);
 }
 
