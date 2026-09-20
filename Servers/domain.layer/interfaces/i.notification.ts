@@ -25,6 +25,7 @@ export enum NotificationType {
 
   // Risk notifications (flag written only by the nightly evidence-freshness sweep)
   EVIDENCE_STALE = "evidence_stale",
+  RISK_INHERITANCE_STALE = "risk_inheritance_stale",
   MODEL_RISK_CANDIDATES = "model_risk_candidates",
   RISK_DEADLINE_DUE_SOON = "risk_deadline_due_soon",
   MODEL_RISK_DUE_SOON = "model_risk_due_soon",

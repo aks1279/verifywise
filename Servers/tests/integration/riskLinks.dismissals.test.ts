@@ -2,7 +2,7 @@ jest.setTimeout(60000);
 
 import { cleanupDatabase } from "./helpers";
 import { sequelize } from "../../database/db";
-import { seedTwoTenantContexts } from "./tenant-isolation/tenantIsolation.harness";
+import { seedTwoTenantContexts, buildTenantContext } from "./tenant-isolation/tenantIsolation.harness";
 import { createTestRisk } from "../factories";
 
 afterEach(async () => {
@@ -141,5 +141,45 @@ describe("GET /api/riskLinks/dismissals", () => {
     expect(row.decided).toBe(4);
     expect(row.dismissed).toBe(4);
     expect(row.topReason).toBe("none");
+  });
+
+  it("excludes a hand-made dismissed user link from suggester feedback", async () => {
+    const { owner } = await seedTwoTenantContexts();
+    const a = await createTestRisk(owner.orgId, {});
+    const b = await createTestRisk(owner.orgId, {});
+    const [s, t] = a < b ? [a, b] : [b, a];
+    // A user-created link dismissed from confirmed is an un-link, not a
+    // rejected suggestion; it must not pollute the tuning aggregates.
+    await insertLink(owner.orgId, s, t, { source: "user", dismissReason: null });
+
+    const res = await owner.request.get("/api/riskLinks/dismissals");
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.signals).toEqual([]);
+    expect(res.body.data.reasons).toEqual([]);
+  });
+
+  it("admits a SuperAdmin to the admin reports", async () => {
+    // roleId 5 is SuperAdmin: org-wide visibility like Admin. Only one
+    // SuperAdmin may exist (idx_users_superadmin_unique), so build a single
+    // context instead of the two-context seeder.
+    const owner = await buildTenantContext(5);
+
+    const graph = await owner.request.get("/api/riskLinks");
+    expect(graph.status).toBe(200);
+
+    const dismissals = await owner.request.get("/api/riskLinks/dismissals");
+    expect(dismissals.status).toBe(200);
+  });
+
+  it("denies a non-admin the org-wide graph and dismissal analytics", async () => {
+    // roleId 3 is Editor: can read/write risks, must not see the admin reports.
+    const { owner } = await seedTwoTenantContexts(3);
+
+    const graph = await owner.request.get("/api/riskLinks");
+    expect(graph.status).toBe(403);
+
+    const dismissals = await owner.request.get("/api/riskLinks/dismissals");
+    expect(dismissals.status).toBe(403);
   });
 });

@@ -139,3 +139,58 @@ export interface DismissalAnalytics {
   reasons: DismissalReasonRow[];
   notes: DismissalNote[];
 }
+
+/**
+ * F7 — duplicate candidates, and F8 — control coverage.
+ *
+ * Snake_case on purpose: unlike the dismissal payload, which the query layer
+ * maps to camelCase, these two services return their own interfaces verbatim
+ * (Servers/services/riskLinks/duplicates.ts, coverage.ts). Renaming here would
+ * mean a translation layer that only exists to hide what the API sends.
+ */
+export interface DuplicateCandidate {
+  risk_a: { id: number; risk_name: string; risk_owner: number | null };
+  risk_b: { id: number; risk_name: string; risk_owner: number | null };
+  /** Jaccard over name+description tokens, rounded to 2 decimals. */
+  similarity: number;
+  shared_tokens: string[];
+  /** Display context, e.g. "category: Operational risk", "project". */
+  also_shares: string[];
+}
+
+export interface DuplicateReport {
+  organization_id: number;
+  scanned: number;
+  compared: number;
+  /** Set by any of three caps: pairs scored, results kept, or risks scanned. */
+  truncated: boolean;
+  candidates: DuplicateCandidate[];
+}
+
+export interface CoverageGapRisk {
+  id: number;
+  risk_name: string;
+  risk_owner: number | null;
+  risk_level: string | null;
+  mitigation_status: string | null;
+  projects: { id: number; name: string; has_framework: boolean }[];
+  /**
+   * Context only. A risk linked solely to a questionnaire answer is still an
+   * audit finding, so this never moves a risk out of `gaps`.
+   */
+  assessment_link_count: number;
+}
+
+export interface CoverageReport {
+  summary: {
+    total_active_risks: number;
+    covered: number;
+    gap: number;
+    no_framework: number;
+  };
+  /** Has a framework-attached project but no control link — a real finding. */
+  gaps: CoverageGapRisk[];
+  /** Nothing to map to yet. Not a finding. */
+  no_framework: CoverageGapRisk[];
+  truncated: boolean;
+}

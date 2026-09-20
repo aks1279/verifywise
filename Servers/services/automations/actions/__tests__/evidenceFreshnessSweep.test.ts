@@ -3,13 +3,22 @@ import {
   runEvidenceFreshnessSweepAllOrgs,
 } from "../evidenceFreshnessSweep";
 import { getStaleEvidenceRiskIdsQuery } from "../../../../utils/evidenceHub.utils";
+import {
+  getUnnotifiedStaleRisksQuery,
+  markEvidenceStaleNotifiedQuery,
+} from "../../../../utils/evidenceHub.utils";
 import { notifyEvidenceStale } from "../../../inAppNotification.service";
 import { sequelize } from "../../../../database/db";
 import { getAllOrganizationsQuery } from "../../../../utils/organization.utils";
 import { recordSnapshotIfChanged } from "../../../../utils/history/riskHistory.utils";
 
+const mockUnnotifiedImpl = jest.fn();
+const mockMarkNotifiedImpl = jest.fn();
+
 jest.mock("../../../../utils/evidenceHub.utils", () => ({
   getStaleEvidenceRiskIdsQuery: jest.fn(),
+  getUnnotifiedStaleRisksQuery: (...args: unknown[]) => mockUnnotifiedImpl(...args),
+  markEvidenceStaleNotifiedQuery: (...args: unknown[]) => mockMarkNotifiedImpl(...args),
 }));
 jest.mock("../../../inAppNotification.service", () => ({
   notifyEvidenceStale: jest.fn(),
@@ -29,6 +38,8 @@ jest.mock("../../../../utils/logger/fileLogger", () => ({
 }));
 
 const mockStale = getStaleEvidenceRiskIdsQuery as jest.Mock;
+const mockUnnotified = mockUnnotifiedImpl;
+const mockMarkNotified = mockMarkNotifiedImpl;
 const mockNotify = notifyEvidenceStale as jest.Mock;
 const mockQuery = sequelize.query as jest.Mock;
 const mockOrgs = getAllOrganizationsQuery as jest.Mock;
@@ -40,12 +51,14 @@ const mockSnapshot = recordSnapshotIfChanged as jest.Mock;
 const flags = new Map<string, string | null>();
 const owners = new Map<string, number | null>();
 const statuses = new Map<string, string>();
+const notified = new Map<string, string | null>();
 const key = (org: number, id: number) => `${org}:${id}`;
 
 const resetState = () => {
   flags.clear();
   owners.clear();
   statuses.clear();
+  notified.clear();
 };
 
 const seedRisk = (
@@ -107,6 +120,29 @@ beforeEach(() => {
   resetState();
   mockNotify.mockResolvedValue(undefined);
   mockSnapshot.mockResolvedValue(null);
+  // Flagged rows whose current flag the owner has not been told about yet.
+  mockUnnotified.mockImplementation(async (org: number) => {
+    const out = [];
+    for (const [k, v] of flags) {
+      const [o, idStr] = k.split(":");
+      if (Number(o) !== org || v == null) continue;
+      const already = notified.get(k);
+      if (already != null && already >= v) continue;
+      const id = Number(idStr);
+      out.push({
+        id,
+        risk_name: `Risk ${id}`,
+        risk_owner: owners.get(k) ?? null,
+        evidence_stale_at: v,
+      });
+    }
+    return out;
+  });
+  // Guarded stamp: only advances when the flag is still the seen value.
+  mockMarkNotified.mockImplementation(async (org: number, id: number, seen: string) => {
+    const k = key(org, id);
+    if (flags.get(k) === seen) notified.set(k, seen);
+  });
 });
 
 describe("runEvidenceFreshnessSweep", () => {
@@ -167,6 +203,19 @@ describe("runEvidenceFreshnessSweep", () => {
     const summary = await runEvidenceFreshnessSweep(1);
 
     expect(summary).toEqual({ organization_id: 1, stale: 2, downgraded: 0, cleared: 0, notified: 1 });
+    expect(mockNotify).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a notification that failed on the previous run", async () => {
+    seedRisk(1, 10, 5);
+    mockStale.mockResolvedValue([10]);
+    mockNotify.mockRejectedValueOnce(new Error("delivery boom"));
+
+    const first = await runEvidenceFreshnessSweep(1);
+    expect(first).toEqual({ organization_id: 1, stale: 1, downgraded: 0, cleared: 0, notified: 0 });
+
+    const second = await runEvidenceFreshnessSweep(1);
+    expect(second).toEqual({ organization_id: 1, stale: 0, downgraded: 0, cleared: 0, notified: 1 });
     expect(mockNotify).toHaveBeenCalledTimes(2);
   });
 

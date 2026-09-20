@@ -1,12 +1,20 @@
 import { notifyModelRiskCandidates } from "../modelCandidates";
 import { getModelRiskCandidatesQuery } from "../../../utils/riskLink.utils";
 import { notifyRiskOfModelCandidates } from "../../inAppNotification.service";
+import {
+  getAnnouncedModelRiskIdsQuery,
+  hasModelRiskCandidateNoticeQuery,
+} from "../../../utils/notification.utils";
 
 jest.mock("../../../utils/riskLink.utils", () => ({
   getModelRiskCandidatesQuery: jest.fn(),
 }));
 jest.mock("../../inAppNotification.service", () => ({
   notifyRiskOfModelCandidates: jest.fn(),
+}));
+jest.mock("../../../utils/notification.utils", () => ({
+  hasModelRiskCandidateNoticeQuery: jest.fn(),
+  getAnnouncedModelRiskIdsQuery: jest.fn(),
 }));
 jest.mock("../../../utils/logger/fileLogger", () => ({
   __esModule: true,
@@ -15,6 +23,8 @@ jest.mock("../../../utils/logger/fileLogger", () => ({
 
 const mockQuery = getModelRiskCandidatesQuery as jest.Mock;
 const mockNotify = notifyRiskOfModelCandidates as jest.Mock;
+const mockAlreadyNotified = hasModelRiskCandidateNoticeQuery as jest.Mock;
+const mockAnnounced = getAnnouncedModelRiskIdsQuery as jest.Mock;
 
 const input = {
   organizationId: 1,
@@ -25,7 +35,9 @@ const input = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockNotify.mockResolvedValue(undefined);
+  mockNotify.mockResolvedValue(true);
+  mockAlreadyNotified.mockResolvedValue(false);
+  mockAnnounced.mockResolvedValue([]);
 });
 
 describe("notifyModelRiskCandidates", () => {
@@ -65,6 +77,7 @@ describe("notifyModelRiskCandidates", () => {
       { id: 31, risk_name: "Risk A", risk_owner: 5 },
       { id: 11, name: "Lending scorecard" },
       2,
+      [],
     );
   });
 
@@ -85,6 +98,70 @@ describe("notifyModelRiskCandidates", () => {
     expect(mockNotify).not.toHaveBeenCalled();
   });
 
+  it("skips a risk already notified about this model", async () => {
+    mockQuery.mockResolvedValue([
+      { risk_id: 31, risk_name: "Risk A", risk_owner: 5, candidate_count: 2 },
+    ]);
+    mockAlreadyNotified.mockResolvedValue(true);
+
+    const summary = await notifyModelRiskCandidates(input);
+
+    expect(summary.notified).toBe(0);
+    expect(mockNotify).not.toHaveBeenCalled();
+    expect(mockAlreadyNotified).toHaveBeenCalledWith(1, 5, 31, 11);
+  });
+
+  it("re-notifies for a new model risk despite a prior model-level notice", async () => {
+    mockQuery.mockResolvedValue([
+      { risk_id: 31, risk_name: "Risk A", risk_owner: 5, candidate_count: 1 },
+    ]);
+    mockAlreadyNotified.mockResolvedValue(true);
+    mockAnnounced.mockResolvedValue([]);
+
+    const summary = await notifyModelRiskCandidates({ ...input, modelRiskIds: [99] });
+
+    expect(summary.notified).toBe(1);
+    expect(mockAlreadyNotified).not.toHaveBeenCalled();
+    expect(mockAnnounced).toHaveBeenCalledWith(1, 5, 31, 11);
+    expect(mockNotify).toHaveBeenCalledWith(
+      1,
+      { id: 31, risk_name: "Risk A", risk_owner: 5 },
+      { id: 11, name: "Lending scorecard" },
+      1,
+      [99],
+    );
+  });
+
+  it("skips model risks already announced for this risk", async () => {
+    mockQuery.mockResolvedValue([
+      { risk_id: 31, risk_name: "Risk A", risk_owner: 5, candidate_count: 1 },
+    ]);
+    mockAnnounced.mockResolvedValue([99]);
+
+    const summary = await notifyModelRiskCandidates({ ...input, modelRiskIds: [99] });
+
+    expect(summary.notified).toBe(0);
+    expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  it("announces only the unannounced subset of a multi-id trigger", async () => {
+    mockQuery.mockResolvedValue([
+      { risk_id: 31, risk_name: "Risk A", risk_owner: 5, candidate_count: 2 },
+    ]);
+    mockAnnounced.mockResolvedValue([99]);
+
+    const summary = await notifyModelRiskCandidates({ ...input, modelRiskIds: [99, 100] });
+
+    expect(summary.notified).toBe(1);
+    expect(mockNotify).toHaveBeenCalledWith(
+      1,
+      { id: 31, risk_name: "Risk A", risk_owner: 5 },
+      { id: 11, name: "Lending scorecard" },
+      2,
+      [100],
+    );
+  });
+
   it("one rejecting notifier does not abort the other", async () => {
     mockQuery.mockResolvedValue([
       { risk_id: 31, risk_name: "Risk A", risk_owner: 5, candidate_count: 1 },
@@ -92,6 +169,7 @@ describe("notifyModelRiskCandidates", () => {
     ]);
     mockNotify.mockImplementation(async (_org: number, risk: { id: number }) => {
       if (risk.id === 31) throw new Error("delivery boom");
+      return true;
     });
 
     const summary = await notifyModelRiskCandidates(input);

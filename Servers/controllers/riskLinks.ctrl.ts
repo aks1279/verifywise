@@ -11,6 +11,7 @@ import {
   MAX_COMPONENT_SIZE,
 } from "../services/riskLinks/direction/components";
 import {
+  acknowledgeParentLevelChangeQuery,
   createUserRiskLinkQuery,
   getActiveRiskIdsQuery,
   getConfirmedHierarchyEdgesQuery,
@@ -29,11 +30,13 @@ import {
 } from "../utils/riskLink.utils";
 import { findDuplicateCandidates } from "../services/riskLinks/duplicates";
 import { findControlCoverage } from "../services/riskLinks/coverage";
-import { HierarchyViolation, ParentEntityType, validateTwoLevel } from "../services/riskLinks/hierarchy";
 import {
-  DismissReasonRejection,
-  validateDismissReason,
-} from "../services/riskLinks/dismissReason";
+  HierarchyViolation,
+  ParentEntityType,
+  validateTwoLevel,
+} from "../services/riskLinks/hierarchy";
+import { DismissReasonRejection, validateDismissReason } from "../services/riskLinks/dismissReason";
+import { toId } from "../utils/validations/validation.utils";
 import {
   canonicalPair,
   RISK_LINK_STATUSES,
@@ -158,7 +161,7 @@ function resolveTarget(
   ];
   const given = candidates
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([entityType, value]) => ({ entityType, id: parseInt(String(value), 10) }));
+    .map(([entityType, value]) => ({ entityType, id: toId(value) }));
 
   if (given.length !== 1 || isNaN(given[0].id)) return { rejection: "not_exactly_one" };
   if (given[0].entityType !== "risk" && relationType !== "inherits_from") {
@@ -196,7 +199,7 @@ export async function getRiskLinks(req: Request, res: Response): Promise<any> {
   });
 
   try {
-    const riskId = parseInt(String(req.params.riskId), 10);
+    const riskId = toId(req.params.riskId);
     if (isNaN(riskId)) {
       return res.status(400).json(STATUS_CODE[400]("Invalid risk ID"));
     }
@@ -260,13 +263,16 @@ export async function getRiskGraph(req: Request, res: Response): Promise<any> {
     const truncated = rows.length > RISK_GRAPH_EDGE_CAP;
     const kept = truncated ? rows.slice(0, RISK_GRAPH_EDGE_CAP) : rows;
 
-    const nodes = new Map<string, {
-      key: string;
-      entityType: ParentEntityType;
-      id: number;
-      name: string | null;
-      riskLevel: string | null;
-    }>();
+    const nodes = new Map<
+      string,
+      {
+        key: string;
+        entityType: ParentEntityType;
+        id: number;
+        name: string | null;
+        riskLevel: string | null;
+      }
+    >();
     const addNode = (
       entityType: ParentEntityType,
       id: number,
@@ -300,9 +306,7 @@ export async function getRiskGraph(req: Request, res: Response): Promise<any> {
       organizationId: req.organizationId!,
     });
 
-    return res
-      .status(200)
-      .json(STATUS_CODE[200]({ nodes: [...nodes.values()], edges, truncated }));
+    return res.status(200).json(STATUS_CODE[200]({ nodes: [...nodes.values()], edges, truncated }));
   } catch (error) {
     logFailure({
       eventType: "Read",
@@ -460,7 +464,7 @@ export async function getSharedProjects(req: Request, res: Response): Promise<an
   });
 
   try {
-    const riskId = parseInt(String(req.params.riskId), 10);
+    const riskId = toId(req.params.riskId);
     if (isNaN(riskId)) {
       return res.status(400).json(STATUS_CODE[400]("Invalid risk ID"));
     }
@@ -532,9 +536,7 @@ export async function suggestRiskHierarchy(req: Request, res: Response): Promise
     const groupable = components.filter((ids) => ids.length <= MAX_COMPONENT_SIZE);
     const skipped = components.length - groupable.length;
 
-    await Promise.all(
-      groupable.map((ids) => enqueueRiskLinkDirection(req.organizationId!, ids)),
-    );
+    await Promise.all(groupable.map((ids) => enqueueRiskLinkDirection(req.organizationId!, ids)));
 
     logSuccess({
       eventType: "Create",
@@ -545,9 +547,7 @@ export async function suggestRiskHierarchy(req: Request, res: Response): Promise
       organizationId: req.organizationId!,
     });
 
-    return res
-      .status(202)
-      .json(STATUS_CODE[202]({ enqueued: groupable.length, skipped }));
+    return res.status(202).json(STATUS_CODE[202]({ enqueued: groupable.length, skipped }));
   } catch (error) {
     logFailure({
       eventType: "Create",
@@ -572,7 +572,7 @@ export async function updateRiskLinkStatus(req: Request, res: Response): Promise
   });
 
   try {
-    const id = parseInt(String(req.params.id), 10);
+    const id = toId(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json(STATUS_CODE[400]("Invalid link ID"));
     }
@@ -603,9 +603,7 @@ export async function updateRiskLinkStatus(req: Request, res: Response): Promise
       relationType: link.relation_type,
     });
     if (!dismissal.ok) {
-      return res
-        .status(400)
-        .json(STATUS_CODE[400](DISMISS_REASON_MESSAGES[dismissal.rejection]));
+      return res.status(400).json(STATUS_CODE[400](DISMISS_REASON_MESSAGES[dismissal.rejection]));
     }
 
     // Confirming a suggestion, or restoring a dismissed link, reaches the same
@@ -620,11 +618,7 @@ export async function updateRiskLinkStatus(req: Request, res: Response): Promise
           parentRiskId: parent.id,
           parentEntityType: parent.entityType,
         },
-        await getConfirmedHierarchyEdgesQuery(
-          req.organizationId!,
-          link.source_risk_id,
-          parent,
-        ),
+        await getConfirmedHierarchyEdgesQuery(req.organizationId!, link.source_risk_id, parent),
       );
       if (violation) {
         return res.status(409).json(STATUS_CODE[409](HIERARCHY_MESSAGES[violation]));
@@ -655,14 +649,66 @@ export async function updateRiskLinkStatus(req: Request, res: Response): Promise
     return res.status(200).json(STATUS_CODE[200]({ id, status: next }));
   } catch (error) {
     if (isSingleParentViolation(error)) {
-      return res
-        .status(409)
-        .json(STATUS_CODE[409](HIERARCHY_MESSAGES.child_already_has_parent));
+      return res.status(409).json(STATUS_CODE[409](HIERARCHY_MESSAGES.child_already_has_parent));
     }
     logFailure({
       eventType: "Update",
       description: "failed to update risk link status",
       functionName: "updateRiskLinkStatus",
+      fileName: FILE_NAME,
+      error: error as Error,
+      userId: req.userId!,
+      organizationId: req.organizationId!,
+    });
+    return res.status(500).json(STATUS_CODE[500]((error as Error).message));
+  }
+}
+
+/**
+ * Mark a stale-inheritance warning as reviewed. Clears the flag on exactly one
+ * link; org-scoped, so a link in another tenant is a 404, not a silent no-op.
+ * Idempotent: acknowledging an already-cleared link is a 200, not a 404.
+ */
+export async function acknowledgeParentLevelChange(req: Request, res: Response): Promise<any> {
+  logProcessing({
+    description: "starting acknowledgeParentLevelChange",
+    functionName: "acknowledgeParentLevelChange",
+    fileName: FILE_NAME,
+    userId: req.userId!,
+    organizationId: req.organizationId!,
+  });
+
+  try {
+    const id = toId(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json(STATUS_CODE[400]("Invalid link ID"));
+    }
+
+    const cleared = await acknowledgeParentLevelChangeQuery(req.organizationId!, id);
+    if (!cleared) {
+      // No flag to clear: distinguish a missing/foreign link (404) from one
+      // that was already reviewed (200, idempotent).
+      const link = await getRiskLinkByIdQuery(id, req.organizationId!);
+      if (!link) {
+        return res.status(404).json(STATUS_CODE[404]("Risk link not found"));
+      }
+    }
+
+    logSuccess({
+      eventType: "Update",
+      description: `risk link ${id} parent-level change acknowledged`,
+      functionName: "acknowledgeParentLevelChange",
+      fileName: FILE_NAME,
+      userId: req.userId!,
+      organizationId: req.organizationId!,
+    });
+
+    return res.status(200).json(STATUS_CODE[200]({ id, parentLevelChangedAt: null }));
+  } catch (error) {
+    logFailure({
+      eventType: "Update",
+      description: "failed to acknowledge parent-level change",
+      functionName: "acknowledgeParentLevelChange",
       fileName: FILE_NAME,
       error: error as Error,
       userId: req.userId!,
@@ -687,7 +733,7 @@ export async function createRiskLink(req: Request, res: Response): Promise<any> 
   });
 
   try {
-    const sourceRiskId = parseInt(String(req.body?.sourceRiskId), 10);
+    const sourceRiskId = toId(req.body?.sourceRiskId);
     const relationType = req.body?.relationType;
 
     if (isNaN(sourceRiskId) || !isRelationType(relationType)) {
@@ -745,9 +791,7 @@ export async function createRiskLink(req: Request, res: Response): Promise<any> 
         ? canonicalPair(sourceRiskId, parent.id)
         : [sourceRiskId, parent.id];
     const storedTargetParent: HierarchyParent =
-      relationType === "related_to"
-        ? { id: storedTarget, entityType: "risk" }
-        : parent;
+      relationType === "related_to" ? { id: storedTarget, entityType: "risk" } : parent;
 
     const id = await createUserRiskLinkQuery({
       organizationId: req.organizationId!,
@@ -786,9 +830,7 @@ export async function createRiskLink(req: Request, res: Response): Promise<any> 
     // A lost race is a user-facing conflict, not a system failure — and the
     // endpoint's other 409s do not log either.
     if (isSingleParentViolation(error)) {
-      return res
-        .status(409)
-        .json(STATUS_CODE[409](HIERARCHY_MESSAGES.child_already_has_parent));
+      return res.status(409).json(STATUS_CODE[409](HIERARCHY_MESSAGES.child_already_has_parent));
     }
     logFailure({
       eventType: "Create",
@@ -820,7 +862,9 @@ export async function recomputeAllRiskLinks(req: Request, res: Response): Promis
 
   try {
     const riskIds = await getActiveRiskIdsQuery(req.organizationId!);
-    await Promise.all(riskIds.map((riskId) => enqueueRiskLinkRecompute(req.organizationId!, riskId)));
+    await Promise.all(
+      riskIds.map((riskId) => enqueueRiskLinkRecompute(req.organizationId!, riskId)),
+    );
 
     logSuccess({
       eventType: "Create",

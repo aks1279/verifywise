@@ -1,4 +1,8 @@
 import { getModelRiskCandidatesQuery } from "../../utils/riskLink.utils";
+import {
+  getAnnouncedModelRiskIdsQuery,
+  hasModelRiskCandidateNoticeQuery,
+} from "../../utils/notification.utils";
 import { notifyRiskOfModelCandidates } from "../inAppNotification.service";
 import logger from "../../utils/logger/fileLogger";
 
@@ -14,8 +18,9 @@ import logger from "../../utils/logger/fileLogger";
  * a DB CHECK, `inherits_from` collides with the single-parent index, and the
  * scoring engine cannot discriminate these pairs (see the F6 design doc §2).
  * Like the F5 sweep this detects a transition and notifies once; unlike F5 it
- * is trigger-driven, not scheduled, so there is no clear path and no
- * re-notification guard beyond the NOT EXISTS in the query.
+ * is trigger-driven, not scheduled. The sent-record is the notification row
+ * itself: project triggers dedup per (risk, model) in SQL before LIMIT,
+ * model-risk-create triggers dedup per (risk, new model risk) in JS.
  */
 
 /** Cap on risks notified per trigger — matches MAX_CROSS_ENTITY_CANDIDATES. */
@@ -63,17 +68,50 @@ export async function notifyModelRiskCandidates(input: {
 
   let candidates = 0;
   let notified = 0;
+  // Model-risk-create triggers pass the new model risk id(s); their novelty is
+  // per model risk, not per (risk, model) — a prior model-level notice must not
+  // suppress them. Sorted once so the stored sent-record is stable.
+  const triggerModelRiskIds =
+    modelRiskIds && modelRiskIds.length > 0
+      ? [...modelRiskIds].sort((a, b) => a - b)
+      : null;
   for (const row of rows) {
     candidates += row.candidate_count;
     if (row.risk_owner == null) continue;
     try {
-      await notifyRiskOfModelCandidates(
+      let announceIds: number[];
+      if (triggerModelRiskIds) {
+        const announced = await getAnnouncedModelRiskIdsQuery(
+          organizationId,
+          row.risk_owner,
+          row.risk_id,
+          modelInventoryId,
+        );
+        announceIds = triggerModelRiskIds.filter((id) => !announced.includes(id));
+        if (announceIds.length === 0) continue;
+      } else {
+        if (
+          await hasModelRiskCandidateNoticeQuery(
+            organizationId,
+            row.risk_owner,
+            row.risk_id,
+            modelInventoryId,
+          )
+        ) {
+          continue;
+        }
+        announceIds = [];
+      }
+      const sent = await notifyRiskOfModelCandidates(
         organizationId,
         { id: row.risk_id, risk_name: row.risk_name, risk_owner: row.risk_owner },
         { id: modelInventoryId, name: modelName },
         row.candidate_count,
+        announceIds,
       );
-      notified += 1;
+      // False means a concurrent trigger won the race and the unique index
+      // suppressed this duplicate — not a delivery to count.
+      if (sent) notified += 1;
     } catch (error) {
       logger.error(
         `❌ Model-risk-candidate notification failed for org ${organizationId} risk ${row.risk_id}:`,

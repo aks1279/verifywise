@@ -1,6 +1,12 @@
 -- Demo data for F8 control coverage gaps, org 1.
--- Run seed_risk_links_demo.sql first: project 9001 and risks 9501/9505/9530/9561
--- are defined there (F7's seed_risk_duplicates_demo.sql adds 9561-9564).
+--
+-- RUN ORDER: seed_risk_links_demo.sql MUST run first, then
+-- seed_risk_duplicates_demo.sql, then this file. Project 9001 and risks
+-- 9501/9505/9530 come from the links seed, but risk 9561 comes ONLY from the
+-- duplicates seed (F7 owns 9560-9579 inside the 9500-9599 block) -- running
+-- this file straight after the links seed fails on the mappings INSERT below.
+-- Re-running the links seed afterwards wipes 9560-9579 and cascade-deletes
+-- the 9561 mapping, so the full order must be re-run from the top.
 --
 -- THE CLEAN-SLATE BELOW IS ONE STATEMENT ON PURPOSE. Every FK in this subtree
 -- is ON DELETE CASCADE (verified against pg_constraint):
@@ -21,6 +27,24 @@ BEGIN;
 
 -- --------------------------------------------------------------- clean slate
 DELETE FROM projects_frameworks WHERE id BETWEEN 9800 AND 9809;
+
+-- Fail fast with an actionable message when the RUN ORDER above was not
+-- followed. This MUST sit before the first INSERT: without it, a missing
+-- prerequisite surfaces as a cryptic FK violation (projects_frameworks or
+-- projects_risks_id 9561 not present), which reads like a bug in this file
+-- rather than a skipped seed.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM projects WHERE id = 9001 AND organization_id = 1) THEN
+    RAISE EXCEPTION 'seed_risk_coverage_demo.sql requires project 9001: run seed_risk_links_demo.sql first';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES (9501), (9505), (9561)) AS need(id)
+    WHERE NOT EXISTS (SELECT 1 FROM risks r WHERE r.id = need.id AND r.organization_id = 1)
+  ) THEN
+    RAISE EXCEPTION 'seed_risk_coverage_demo.sql requires risks 9501/9505/9561: run seed_risk_links_demo.sql then seed_risk_duplicates_demo.sql first';
+  END IF;
+END $$;
 
 -- ------------------------------------------------- framework onto project 9001
 -- Exactly one demo project gets a framework, so all three report states show
@@ -65,6 +89,7 @@ JOIN controls_eu ce ON ce.control_meta_id = f.struct_control AND ce.id BETWEEN 9
 -- sub-processor unvetted) at the top of the gap list. Mapping 9561 but not
 -- its twin 9562 shows F7 and F8 together: one of a duplicate pair is
 -- controlled, the other is not.
+--
 INSERT INTO subcontrols_eu__risks (organization_id, subcontrol_id, projects_risks_id)
 SELECT 1, se.id, r.id
 FROM (

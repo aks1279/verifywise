@@ -10133,6 +10133,7 @@ paths:
       security:
         -
           bearerAuth: []
+      description: 'Requires role: Admin'
   /riskLinks/dismissals:
     get:
       summary: 'Get Dismissal Analytics'
@@ -10147,6 +10148,7 @@ paths:
       security:
         -
           bearerAuth: []
+      description: 'Requires role: Admin'
   /riskLinks/duplicates:
     get:
       summary: 'Get Duplicate Candidates'
@@ -10214,6 +10216,20 @@ paths:
       tags:
         - RiskLinks
       operationId: updateRiskLinkStatus
+      security:
+        -
+          bearerAuth: []
+  '/riskLinks/{id}/acknowledge-parent-change':
+    post:
+      summary: 'Acknowledge Parent Level Change'
+      responses:
+        '200':
+          description: Success
+        '500':
+          description: 'Internal server error'
+      tags:
+        - RiskLinks
+      operationId: acknowledgeParentLevelChange
       security:
         -
           bearerAuth: []

@@ -103,6 +103,34 @@ describe("GET /api/riskLinks/coverage", () => {
     expect(await linkCount()).toBe(before);
   });
 
+  it("orders a null-severity gap after a rated one", async () => {
+    const { owner } = await seedTwoTenantContexts();
+    const project = await createTestProject(owner.orgId, owner.userId, {});
+    await createTestProjectFramework(owner.orgId, project, 1);
+    const rated = await createTestRisk(owner.orgId, {
+      risk_name: "Rated gap",
+      risk_owner: owner.userId,
+    });
+    const unrated = await createTestRisk(owner.orgId, {
+      risk_name: "Unrated gap",
+      risk_owner: owner.userId,
+    });
+    await sequelize.query(
+      `UPDATE risks SET risk_level_autocalculated = 'High risk' WHERE id = :rated`,
+      { replacements: { rated } },
+    );
+    await linkRiskToProject(owner.orgId, rated, project);
+    await linkRiskToProject(owner.orgId, unrated, project);
+
+    const res = await owner.request.get(COVERAGE_URL);
+
+    expect(res.status).toBe(200);
+    // Worst-first: an unknown severity must not outrank a rated one.
+    const ids = res.body.data.gaps.map((r: { id: number }) => r.id);
+    expect(ids[0]).toBe(rated);
+    expect(ids).toContain(unrated);
+  });
+
   it("never returns another organization's gap risks", async () => {
     const { owner, attacker } = await seedTwoTenantContexts();
     const projectA = await createTestProject(owner.orgId, owner.userId, {});
@@ -129,5 +157,13 @@ describe("GET /api/riskLinks/coverage", () => {
       gap: 1,
     });
     expect(res.body.data.gaps.map((r: { id: number }) => r.id)).toEqual([riskA]);
+  });
+
+  it("denies a non-admin the org-wide coverage report", async () => {
+    const { owner } = await seedTwoTenantContexts(3); // Editor
+
+    const res = await owner.request.get(COVERAGE_URL);
+
+    expect(res.status).toBe(403);
   });
 });

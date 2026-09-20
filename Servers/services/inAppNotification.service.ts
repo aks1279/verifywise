@@ -1086,6 +1086,37 @@ export const notifyEvidenceStale = async (
   );
 };
 
+/**
+ * Notify risk owner that a parent risk's level moved and the inherited level
+ * may now be stale. In-app only, same shape as notifyEvidenceStale: the sweep
+ * keeps retrying until it stamps the link, so a null owner is the only skip.
+ */
+export const notifyParentLevelChanged = async (
+  organizationId: number,
+  risk: {
+    id: number;
+    risk_name: string;
+    risk_owner: number | null;
+  },
+): Promise<void> => {
+  if (risk.risk_owner == null) return;
+
+  await sendInAppNotification(
+    organizationId,
+    {
+      user_id: risk.risk_owner,
+      type: NotificationType.RISK_INHERITANCE_STALE,
+      title: "Inherited risk level may be stale",
+      message: `A parent risk's level changed, so the inherited level on "${risk.risk_name}" may be out of date. Review it.`,
+      entity_type: NotificationEntityType.RISK,
+      entity_id: risk.id,
+      entity_name: risk.risk_name,
+      action_url: buildEntityUrl(NotificationEntityType.RISK, risk.id),
+    },
+    false,
+  );
+};
+
 // Named `notifyRiskOfModelCandidates`, NOT `notifyModelRiskCandidates` —
 // the latter is the orchestrating service in services/riskLinks/modelCandidates.ts,
 // which calls this once per risk. Two different functions; do not merge the names.
@@ -1094,25 +1125,50 @@ export const notifyRiskOfModelCandidates = async (
   risk: { id: number; risk_name: string; risk_owner: number | null },
   model: { id: number; name: string },
   candidateCount: number,
-): Promise<void> => {
-  if (risk.risk_owner == null) return;
-  await sendInAppNotification(
-    organizationId,
-    {
-      user_id: risk.risk_owner,
-      type: NotificationType.MODEL_RISK_CANDIDATES,
-      title: "New model risks to review",
-      message:
-        `Risk "${risk.risk_name}" now shares a project with ` +
-        `${candidateCount} model risk${candidateCount === 1 ? "" : "s"} ` +
-        `from "${model.name}". Review the suggested links.`,
-      entity_type: NotificationEntityType.RISK,
-      entity_id: risk.id,
-      entity_name: risk.risk_name,
-      action_url: buildEntityUrl(NotificationEntityType.RISK, risk.id),
-    },
-    false,
-  );
+  modelRiskIds: number[] = [],
+): Promise<boolean> => {
+  if (risk.risk_owner == null) return false;
+  try {
+    await sendInAppNotification(
+      organizationId,
+      {
+        user_id: risk.risk_owner,
+        type: NotificationType.MODEL_RISK_CANDIDATES,
+        title: "New model risks to review",
+        message:
+          `Risk "${risk.risk_name}" now shares a project with ` +
+          `${candidateCount} model risk${candidateCount === 1 ? "" : "s"} ` +
+          `from "${model.name}". Review the suggested links.`,
+        entity_type: NotificationEntityType.RISK,
+        entity_id: risk.id,
+        entity_name: risk.risk_name,
+        action_url: buildEntityUrl(NotificationEntityType.RISK, risk.id),
+        // Sent-record keys: model-level for project triggers, plus the
+        // announced model-risk ids for model-risk-create triggers (which must
+        // survive a prior model-level notice). Sorted for stable equality.
+        metadata: {
+          model_inventory_id: model.id,
+          model_risk_ids: [...modelRiskIds].sort((a, b) => a - b),
+        },
+      },
+      false,
+    );
+    return true;
+  } catch (error) {
+    // Lost the race with a concurrent trigger that inserted the same notice:
+    // the partial unique index turns it into a suppressed duplicate, not an
+    // error. Match the constraint name so an unrelated 23505 still throws.
+    const pg =
+      (error as { parent?: { code?: string; constraint?: string } })?.parent ??
+      (error as { original?: { code?: string; constraint?: string } })?.original;
+    if (
+      pg?.code === "23505" &&
+      pg?.constraint === "notifications_model_risk_candidates_uniq"
+    ) {
+      return false;
+    }
+    throw error;
+  }
 };
 
 /**

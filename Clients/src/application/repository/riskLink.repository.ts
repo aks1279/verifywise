@@ -1,9 +1,11 @@
 import { apiServices } from "../../infrastructure/api/networkServices";
 import { APIError } from "../tools/error";
 import {
+  CoverageReport,
   CreateRiskLinkInput,
   DismissalAnalytics,
   DismissReason,
+  DuplicateReport,
   RiskGraph,
   RiskLink,
   RiskLinkStatus,
@@ -70,6 +72,21 @@ export async function updateRiskLinkStatus(
   }
 }
 
+/**
+ * Mark a stale-inheritance warning as reviewed. Idempotent on the server.
+ */
+export async function acknowledgeParentLevelChange(id: number): Promise<{ id: number }> {
+  try {
+    const response = await apiServices.post<{ message: string; data: { id: number } }>(
+      `/riskLinks/${id}/acknowledge-parent-change`,
+      {},
+    );
+    return extractData<{ id: number }>(response);
+  } catch (error: any) {
+    throw toAPIError(error, "Failed to acknowledge the parent-level change");
+  }
+}
+
 export async function recomputeRiskLinks(): Promise<{ enqueued: number }> {
   try {
     const response = await apiServices.post<{
@@ -133,5 +150,27 @@ export async function getSharedProjects(riskId: number): Promise<SharedProjectCa
     return extractData<SharedProjectCandidate[]>(response);
   } catch (error: any) {
     throw toAPIError(error, "Failed to fetch shared projects");
+  }
+}
+
+export async function getDuplicateCandidates(): Promise<DuplicateReport> {
+  try {
+    const response = await apiServices.get<{ message: string; data: DuplicateReport }>(
+      "/riskLinks/duplicates",
+    );
+    return extractData<DuplicateReport>(response);
+  } catch (error: any) {
+    throw toAPIError(error, "Failed to fetch duplicate candidates");
+  }
+}
+
+export async function getControlCoverage(): Promise<CoverageReport> {
+  try {
+    const response = await apiServices.get<{ message: string; data: CoverageReport }>(
+      "/riskLinks/coverage",
+    );
+    return extractData<CoverageReport>(response);
+  } catch (error: any) {
+    throw toAPIError(error, "Failed to fetch control coverage");
   }
 }

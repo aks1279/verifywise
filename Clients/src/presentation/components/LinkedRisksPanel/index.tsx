@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Stack, Tooltip, Typography } from "@mui/material";
+import { Info, Network } from "lucide-react";
+import Chip from "../Chip";
+import { CustomizableButton } from "../button/customizable-button";
+import { EmptyState } from "../EmptyState";
+import { textStyles } from "../../themes/typography";
 import {
+  useAcknowledgeParentLevelChange,
   useRecomputeRiskLinks,
   useRiskLinks,
   useSuggestRiskHierarchy,
@@ -58,8 +64,27 @@ const actionsFor = (link: RiskLink): { label: string; next: RiskLinkStatus }[] =
     : [{ label: "Confirm", next: "confirmed" }];
 };
 
+const humanise = (key: string) => {
+  const words = key.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 const reasonLabel = (reason: RiskLink["reasons"][number]) =>
-  reason.detail ? `${reason.signal}: ${reason.detail}` : reason.signal;
+  reason.detail ? `${humanise(reason.signal)}: ${reason.detail}` : humanise(reason.signal);
+
+/**
+ * Why the engine offered this link, as one tooltip line. Three bordered chips
+ * per row buried the risk names they were describing; the same text one hover
+ * away keeps the explanation without paying for it on every row.
+ *
+ * score is 0 by column default on a user link and on an agent link, and means
+ * nothing on either — only the scoring engine produces a number worth showing.
+ */
+const detailsFor = (link: RiskLink) =>
+  [
+    ...(link.source === "derived" ? [`Score ${link.score}`] : []),
+    ...link.reasons.map(reasonLabel),
+  ].join(" · ");
 
 /**
  * The scan and the hierarchy pass are queued, not done, when their request
@@ -97,12 +122,18 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
   const [pending, setPending] = useState<PendingJob | null>(null);
   const isAdmin = useIsAdmin();
 
-  const { data: links = [], isLoading, isError, refetch } = useRiskLinks(
+  const {
+    data: links = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useRiskLinks(
     riskId,
     showDismissed ? "dismissed" : undefined,
     pending ? POLL_INTERVAL_MS : false,
   );
   const updateStatus = useUpdateRiskLinkStatus(riskId);
+  const acknowledge = useAcknowledgeParentLevelChange(riskId);
   const recompute = useRecomputeRiskLinks(riskId);
   const suggestHierarchy = useSuggestRiskHierarchy(riskId);
 
@@ -158,6 +189,12 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
     );
   };
 
+  /** Human confirmed the inherited level is still correct. */
+  const handleAcknowledge = (link: RiskLink) => {
+    setNotice(null);
+    acknowledge.mutate(link.id, { onError: onMutationError });
+  };
+
   const watchForResult = (timedOut: string, window: number) =>
     setPending({ before: fingerprint(links), dismissedView: showDismissed, timedOut, window });
 
@@ -180,9 +217,9 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
           result.enqueued === 0
             ? "No clusters of related risks to group yet. Run a scan for related risks first."
             : `Grouping ${result.enqueued} clusters of related risks. Suggestions appear here as they finish.` +
-              (result.skipped > 0
-                ? ` ${result.skipped} clusters were too large to group in one pass.`
-                : ""),
+                (result.skipped > 0
+                  ? ` ${result.skipped} clusters were too large to group in one pass.`
+                  : ""),
         );
         // Nothing was queued, so there is nothing to wait for. The grouping
         // calls out to a model, so its window can close while the job is still
@@ -204,9 +241,9 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
       <Alert
         severity="error"
         action={
-          <Button size="small" onClick={() => void refetch()}>
+          <CustomizableButton size="small" variant="text" onClick={() => void refetch()}>
             Retry
-          </Button>
+          </CustomizableButton>
         }
       >
         Failed to load linked risks.
@@ -215,30 +252,41 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
   }
 
   return (
-    <Stack spacing={2} sx={{ py: 2 }}>
+    <Stack spacing={8} sx={{ py: 8 }}>
       <Stack direction="row" justifyContent="space-between">
-        <Stack direction="row" spacing={1}>
-          <Button size="small" onClick={() => setShowForm((open) => !open)}>
+        <Stack direction="row" spacing={4}>
+          <CustomizableButton
+            size="small"
+            variant="text"
+            onClick={() => setShowForm((open) => !open)}
+          >
             {showForm ? "Cancel" : "Link a risk"}
-          </Button>
+          </CustomizableButton>
           {/*
             Here rather than in the empty state below: a hierarchy pass groups
             risks that are ALREADY related, so a button that only appeared when
             there were no links would be unreachable exactly when it is useful.
           */}
           {isAdmin && (
-            <Button
+            <CustomizableButton
               size="small"
+              variant="text"
+              color="secondary"
               onClick={handleSuggestHierarchy}
-              disabled={suggestHierarchy.isPending || pending !== null}
+              isDisabled={suggestHierarchy.isPending || pending !== null}
             >
               Suggest hierarchy
-            </Button>
+            </CustomizableButton>
           )}
         </Stack>
-        <Button size="small" onClick={() => setShowDismissed((shown) => !shown)}>
+        <CustomizableButton
+          size="small"
+          variant="text"
+          color="secondary"
+          onClick={() => setShowDismissed((shown) => !shown)}
+        >
           {showDismissed ? "Hide dismissed" : "Show dismissed"}
-        </Button>
+        </CustomizableButton>
       </Stack>
 
       {/*
@@ -261,18 +309,20 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
       {isLoading && <CircularProgress size={20} />}
 
       {!isLoading && links.length === 0 && (
-        <Stack spacing={1} alignItems="flex-start">
-          <Typography variant="body2">No linked risks yet.</Typography>
+        <Stack spacing={4} alignItems="center">
+          {/* showBorder={false}: this list lives inside a tab panel, not a table. */}
+          <EmptyState icon={Network} message="No linked risks yet." showBorder={false} />
           {isAdmin ? (
-            <Button
+            <CustomizableButton
               size="small"
+              variant="text"
               onClick={handleScan}
-              disabled={recompute.isPending || pending !== null}
+              isDisabled={recompute.isPending || pending !== null}
             >
               Scan for related risks
-            </Button>
+            </CustomizableButton>
           ) : (
-            <Typography variant="caption">
+            <Typography sx={{ ...textStyles.caption, color: "text.accent" }}>
               Links appear as risks are saved, or after an administrator runs a scan.
             </Typography>
           )}
@@ -284,41 +334,45 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
         if (group.length === 0) return null;
         return (
           <Box key={title}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            <Typography sx={{ ...textStyles.subsectionTitle, color: "text.primary", mb: 4 }}>
               {title}
             </Typography>
-            <Stack spacing={1}>
+            <Stack spacing={4}>
               {group.map((link) => (
                 <Box key={link.id}>
-                  <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-                    <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                  <Stack direction="row" alignItems="center" spacing={4} flexWrap="wrap">
+                    <Typography sx={{ ...textStyles.body, color: "text.secondary", flexGrow: 1 }}>
                       {link.relatedRisk.name ?? `Risk ${link.relatedRisk.id}`}
                     </Typography>
                     {ENTITY_TYPE_LABELS[link.relatedRisk.entityType] && (
                       <Chip
                         size="small"
-                        variant="outlined"
+                        variant="default"
+                        uppercase={false}
                         label={ENTITY_TYPE_LABELS[link.relatedRisk.entityType]}
                       />
                     )}
                     {link.relatedRisk.riskLevel && (
                       <Chip size="small" label={link.relatedRisk.riskLevel} />
                     )}
-                    {link.reasons.map((reason, index) => (
-                      <Chip key={index} size="small" variant="outlined" label={reasonLabel(reason)} />
-                    ))}
                     {/*
                       Only in the dismissed view, since it is null everywhere
                       else. The note rides along as the tooltip rather than
                       stretching the row.
                     */}
                     {link.dismissReason && (
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        label={DISMISS_REASON_LABELS[link.dismissReason]}
+                      <Box
+                        component="span"
+                        sx={{ display: "inline-flex" }}
                         title={link.dismissNote ?? undefined}
-                      />
+                      >
+                        <Chip
+                          size="small"
+                          variant="default"
+                          uppercase={false}
+                          label={DISMISS_REASON_LABELS[link.dismissReason]}
+                        />
+                      </Box>
                     )}
                     {/*
                       Only on the child's own view. The same link row appears in the parent's
@@ -326,20 +380,39 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
                       statement about the child.
                     */}
                     {link.direction === "outgoing" && link.parentLevelChangedAt && (
-                      <Chip
-                        size="small"
-                        color="warning"
-                        label="Parent level changed"
-                        title={new Date(link.parentLevelChangedAt).toLocaleString()}
-                      />
+                      <>
+                        <Box
+                          component="span"
+                          sx={{ display: "inline-flex" }}
+                          title={new Date(link.parentLevelChangedAt).toLocaleString()}
+                        >
+                          <Chip size="small" variant="warning" label="Parent level changed" />
+                        </Box>
+                        <CustomizableButton
+                          size="small"
+                          variant="text"
+                          color="primary"
+                          isDisabled={acknowledge.isPending}
+                          onClick={() => handleAcknowledge(link)}
+                        >
+                          Mark reviewed
+                        </CustomizableButton>
+                      </>
                     )}
-                    {/*
-                      score is 0 by column default on a user link and on an agent
-                      link, and means nothing on either. Only the scoring engine
-                      produces a number worth showing.
-                    */}
-                    {link.source === "derived" && (
-                      <Typography variant="caption">{link.score}</Typography>
+                    {detailsFor(link) && (
+                      <Tooltip title={detailsFor(link)} arrow>
+                        <CustomizableButton
+                          iconOnly
+                          size="small"
+                          variant="text"
+                          color="secondary"
+                          ariaLabel={`Why ${
+                            link.relatedRisk.name ?? `risk ${link.relatedRisk.id}`
+                          } is linked`}
+                        >
+                          <Info size={16} />
+                        </CustomizableButton>
+                      </Tooltip>
                     )}
                     {/*
                       Hidden while this row's reason form is open. Two live
@@ -349,14 +422,18 @@ export default function LinkedRisksPanel({ riskId }: LinkedRisksPanelProps) {
                     */}
                     {dismissing?.id !== link.id &&
                       actionsFor(link).map(({ label, next }) => (
-                        <Button
+                        <CustomizableButton
                           key={label}
                           size="small"
-                          disabled={updateStatus.isPending}
+                          variant="text"
+                          // Confirm is the affirmative action; Dismiss must not
+                          // compete with it for primary.
+                          color={next === "dismissed" ? "secondary" : "primary"}
+                          isDisabled={updateStatus.isPending}
                           onClick={() => handleAction(link, next)}
                         >
                           {label}
-                        </Button>
+                        </CustomizableButton>
                       ))}
                   </Stack>
 

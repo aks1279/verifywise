@@ -10,6 +10,7 @@ const mockUseRiskLinks = vi.fn();
 const mockMutateStatus = vi.fn();
 const mockMutateRecompute = vi.fn();
 const mockMutateSuggest = vi.fn();
+const mockMutateAcknowledge = vi.fn();
 const mockIsAdmin = vi.fn();
 
 vi.mock("../../../../application/hooks/useRiskLinks", () => ({
@@ -19,6 +20,10 @@ vi.mock("../../../../application/hooks/useRiskLinks", () => ({
   useRecomputeRiskLinks: () => ({ mutate: mockMutateRecompute, isPending: false }),
   useCreateRiskLink: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useSuggestRiskHierarchy: () => ({ mutate: mockMutateSuggest, isPending: false }),
+  useAcknowledgeParentLevelChange: () => ({
+    mutate: mockMutateAcknowledge,
+    isPending: false,
+  }),
   useSharedProjects: () => ({ data: [] }),
 }));
 
@@ -124,8 +129,11 @@ describe("LinkedRisksPanel grouping", () => {
     );
     render(<LinkedRisksPanel riskId={42} />);
 
-    expect(screen.getByText("4.2")).toBeInTheDocument();
-    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    // Score and signals live in the row's tooltip now, not in the row itself.
+    // MUI Tooltip makes its string title the trigger's accessible name, so the
+    // name is the assertion — no hover, no timing.
+    expect(screen.getByRole("button", { name: "Score 4.2 · Shared category" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shared category" })).toBeInTheDocument();
   });
 
   it("offers an admin the hierarchy pass even when links already exist", async () => {
@@ -172,8 +180,10 @@ describe("LinkedRisksPanel grouping", () => {
 
     render(<LinkedRisksPanel riskId={42} />);
 
-    expect(screen.getByText(/same deployed model/i)).toBeInTheDocument();
-    expect(screen.queryByText("0")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Hierarchy: Same deployed model." }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Score/ })).toBeNull();
   });
 });
 
@@ -654,5 +664,14 @@ describe("LinkedRisksPanel stale-inheritance badge", () => {
     render(<LinkedRisksPanel riskId={42} />);
 
     expect(screen.queryByText("Parent level changed")).not.toBeInTheDocument();
+  });
+
+  it("acknowledges the flag when Mark reviewed is clicked", async () => {
+    mockUseRiskLinks.mockReturnValue(queryResult([flagged({ id: 77 })]));
+    render(<LinkedRisksPanel riskId={42} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
+
+    expect(mockMutateAcknowledge).toHaveBeenCalledWith(77, expect.anything());
   });
 });

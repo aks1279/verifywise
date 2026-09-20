@@ -21,11 +21,14 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   Typography,
 } from "@mui/material";
-import { ChevronDown } from "lucide-react";
+import { AlertCircle, BarChart, ChevronDown } from "lucide-react";
+import { EmptyState } from "../../../components/EmptyState";
+import singleTheme from "../../../themes/v1SingleTheme";
 import { getDismissalAnalytics } from "../../../../application/repository/riskLink.repository";
 import type {
   DismissalAnalytics as DismissalAnalyticsPayload,
@@ -35,9 +38,15 @@ import type {
 import { DISMISS_REASON_LABELS } from "../../../components/LinkedRisksPanel/DismissReasonForm";
 import {
   sectionSx,
+  summaryTitleSx,
   blockHeadingSx,
   captionSx,
   tableSx,
+  tableHeadRowSx,
+  tableHeadCellSx,
+  tableBodyRowSx,
+  tableBodyCellSx,
+  notesFrameSx,
   rateCellSx,
   barTrackSx,
   barFillSx,
@@ -46,7 +55,8 @@ import {
   noteMetaSx,
   noteTextSx,
   stateContainerSx,
-  stateTextSx,
+  errorAlertSx,
+  errorTextSx,
 } from "./styles";
 
 /** Human label for a machine signal key. Derived, never hardcoded: providers
@@ -107,12 +117,16 @@ export function groupReasons(rows: DismissalReasonRow[]): ReasonGroup[] {
       groups.set(key, group);
     }
     group.decided += row.count;
-    if (row.status === "dismissed") group.dismissed += row.count;
-    group.rows.push({
-      key: `${row.status}:${row.dismissReason ?? "null"}`,
-      label: reasonLabel(row.dismissReason),
-      count: row.count,
-    });
+    // Confirmed links contribute to `decided` but carry no reason, so listing
+    // them here would render them as "No reason given" dismissals.
+    if (row.status === "dismissed") {
+      group.dismissed += row.count;
+      group.rows.push({
+        key: `${row.status}:${row.dismissReason ?? "null"}`,
+        label: reasonLabel(row.dismissReason),
+        count: row.count,
+      });
+    }
   }
   return [...groups.values()];
 }
@@ -131,7 +145,8 @@ const DismissalAnalytics: React.FC = () => {
         const payload = await getDismissalAnalytics();
         if (mounted) setData(payload);
       } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : "Failed to fetch dismissal analytics");
+        if (mounted)
+          setError(err instanceof Error ? err.message : "Failed to fetch dismissal analytics");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -142,27 +157,34 @@ const DismissalAnalytics: React.FC = () => {
     };
   }, []);
 
+  // Confirmed-only groups have no reasons to explain; drop them so the block
+  // never renders a heading over an empty table.
+  const reasonGroups = data
+    ? groupReasons(data.reasons).filter((group) => group.rows.length > 0)
+    : [];
+
   return (
     <Accordion defaultExpanded={false} sx={sectionSx}>
       <AccordionSummary expandIcon={<ChevronDown size={18} />}>
-        <Typography variant="subtitle2">Dismissal analytics</Typography>
+        <Typography sx={summaryTitleSx}>Dismissal analytics</Typography>
       </AccordionSummary>
-      <AccordionDetails>
+      <AccordionDetails sx={{ p: 8 }}>
         {loading ? (
           <Box sx={stateContainerSx}>
             <CircularProgress size={24} />
           </Box>
         ) : error ? (
-          <Box sx={stateContainerSx}>
-            <Typography sx={stateTextSx}>{error}</Typography>
+          <Box sx={errorAlertSx} role="alert">
+            <AlertCircle size={16} />
+            <Typography sx={errorTextSx}>{error}</Typography>
           </Box>
         ) : !data ||
-          (data.signals.length === 0 && data.reasons.length === 0 && data.notes.length === 0) ? (
-          <Box sx={stateContainerSx}>
-            <Typography sx={stateTextSx}>
-              No decided links yet — numbers appear once suggestions are confirmed or dismissed.
-            </Typography>
-          </Box>
+          (data.signals.length === 0 && reasonGroups.length === 0 && data.notes.length === 0) ? (
+          <EmptyState
+            icon={BarChart}
+            message="No decided links yet — numbers appear once suggestions are confirmed or dismissed."
+            showBorder={false}
+          />
         ) : (
           <>
             {data.signals.length > 0 && (
@@ -172,63 +194,99 @@ const DismissalAnalytics: React.FC = () => {
                   Signals are recomputed on every save, so they describe the pair today, not the
                   moment of the decision.
                 </Typography>
-                <Table size="small" sx={tableSx}>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Signal</TableCell>
-                      <TableCell align="right">Decided</TableCell>
-                      <TableCell align="right">Dismissed</TableCell>
-                      <TableCell>Dismiss rate</TableCell>
-                      <TableCell>Top reason</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {data.signals.map((row) => (
-                      <TableRow key={row.signal}>
-                        <TableCell>{signalLabel(row.signal)}</TableCell>
-                        <TableCell align="right">{row.decided}</TableCell>
-                        <TableCell align="right">{row.dismissed}</TableCell>
-                        <TableCell>
-                          <Box sx={rateCellSx}>
-                            <Box sx={barTrackSx} aria-hidden="true">
-                              <Box sx={barFillSx(ratePercent(row.decided, row.dismissed))} />
-                            </Box>
-                            <span>{rateText(row.decided, row.dismissed)}</span>
-                          </Box>
+                <TableContainer>
+                  <Table sx={tableSx}>
+                    <TableHead
+                      sx={{
+                        backgroundColor: singleTheme.tableStyles.primary.header.backgroundColors,
+                      }}
+                    >
+                      <TableRow sx={tableHeadRowSx}>
+                        <TableCell sx={tableHeadCellSx}>Signal</TableCell>
+                        <TableCell sx={tableHeadCellSx} align="right">
+                          Decided
                         </TableCell>
-                        <TableCell>{topReasonLabel(row.topReason)}</TableCell>
+                        <TableCell sx={tableHeadCellSx} align="right">
+                          Dismissed
+                        </TableCell>
+                        <TableCell sx={tableHeadCellSx}>Dismiss rate</TableCell>
+                        <TableCell sx={tableHeadCellSx}>Top reason</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHead>
+                    <TableBody>
+                      {data.signals.map((row) => (
+                        <TableRow key={row.signal} sx={tableBodyRowSx}>
+                          <TableCell sx={tableBodyCellSx}>{signalLabel(row.signal)}</TableCell>
+                          <TableCell sx={tableBodyCellSx} align="right">
+                            {row.decided}
+                          </TableCell>
+                          <TableCell sx={tableBodyCellSx} align="right">
+                            {row.dismissed}
+                          </TableCell>
+                          <TableCell sx={tableBodyCellSx}>
+                            <Box sx={rateCellSx}>
+                              <Box sx={barTrackSx} aria-hidden="true">
+                                <Box sx={barFillSx(ratePercent(row.decided, row.dismissed))} />
+                              </Box>
+                              <span>{rateText(row.decided, row.dismissed)}</span>
+                            </Box>
+                          </TableCell>
+                          <TableCell sx={tableBodyCellSx}>
+                            {topReasonLabel(row.topReason)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </>
             )}
 
-            {data.reasons.length > 0 && (
+            {reasonGroups.length > 0 && (
               <>
                 <Typography sx={blockHeadingSx}>Why suggestions get dismissed</Typography>
                 <Typography sx={captionSx}>
                   The &ldquo;No reason given&rdquo; bucket also holds links that were un-linked
-                  after being accepted: confirming then dismissing a pair necessarily writes a
-                  NULL reason, and no column records the prior status — so that bucket is not
-                  pure suggester feedback.
+                  after being accepted: confirming then dismissing a pair necessarily writes a NULL
+                  reason, and no column records the prior status — so that bucket is not pure
+                  suggester feedback.
                 </Typography>
-                {groupReasons(data.reasons).map((group) => (
+                {reasonGroups.map((group) => (
                   <Box key={`${group.relationType} · ${group.source}`}>
                     <Typography sx={groupHeaderSx}>
-                      {group.relationType} · {group.source} — {group.dismissed} of{" "}
-                      {group.decided} dismissed ({rateText(group.decided, group.dismissed)})
+                      {/* Raw column values ("related_to", "agent") are not sentence case;
+                          signalLabel is already the file's underscore-to-words helper. */}
+                      {signalLabel(group.relationType)} · {signalLabel(group.source)} —{" "}
+                      {group.dismissed} of {group.decided} dismissed (
+                      {rateText(group.decided, group.dismissed)})
                     </Typography>
-                    <Table size="small" sx={tableSx}>
-                      <TableBody>
-                        {group.rows.map((row) => (
-                          <TableRow key={row.key}>
-                            <TableCell>{row.label}</TableCell>
-                            <TableCell align="right">{row.count}</TableCell>
+                    <TableContainer>
+                      <Table sx={tableSx}>
+                        <TableHead
+                          sx={{
+                            backgroundColor:
+                              singleTheme.tableStyles.primary.header.backgroundColors,
+                          }}
+                        >
+                          <TableRow sx={tableHeadRowSx}>
+                            <TableCell sx={tableHeadCellSx}>Reason</TableCell>
+                            <TableCell sx={tableHeadCellSx} align="right">
+                              Count
+                            </TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                        </TableHead>
+                        <TableBody>
+                          {group.rows.map((row) => (
+                            <TableRow key={row.key} sx={tableBodyRowSx}>
+                              <TableCell sx={tableBodyCellSx}>{row.label}</TableCell>
+                              <TableCell sx={tableBodyCellSx} align="right">
+                                {row.count}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </Box>
                 ))}
               </>
@@ -237,11 +295,15 @@ const DismissalAnalytics: React.FC = () => {
             {data.notes.length > 0 && (
               <>
                 <Typography sx={blockHeadingSx}>Recent notes</Typography>
-                <Box>
+                <Box sx={notesFrameSx}>
                   {data.notes.map((note) => (
                     <Box key={note.id} sx={noteItemSx}>
                       <Typography sx={noteMetaSx}>
-                        {[note.sourceName, note.relationType, reasonLabel(note.dismissReason)]
+                        {[
+                          note.sourceName,
+                          signalLabel(note.relationType),
+                          reasonLabel(note.dismissReason),
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                         {note.decidedAt

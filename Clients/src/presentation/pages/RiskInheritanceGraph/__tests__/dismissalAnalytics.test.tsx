@@ -43,10 +43,34 @@ describe("dismissal analytics helpers", () => {
 
   it("pools group denominators without crossing relation or source", () => {
     const groups = groupReasons([
-      { relationType: "inherits_from", source: "agent", status: "confirmed", dismissReason: null, count: 16 },
-      { relationType: "inherits_from", source: "agent", status: "dismissed", dismissReason: null, count: 20 },
-      { relationType: "inherits_from", source: "agent", status: "dismissed", dismissReason: "wrong_parent", count: 4 },
-      { relationType: "related_to", source: "derived", status: "dismissed", dismissReason: null, count: 5 },
+      {
+        relationType: "inherits_from",
+        source: "agent",
+        status: "confirmed",
+        dismissReason: null,
+        count: 16,
+      },
+      {
+        relationType: "inherits_from",
+        source: "agent",
+        status: "dismissed",
+        dismissReason: null,
+        count: 20,
+      },
+      {
+        relationType: "inherits_from",
+        source: "agent",
+        status: "dismissed",
+        dismissReason: "wrong_parent",
+        count: 4,
+      },
+      {
+        relationType: "related_to",
+        source: "derived",
+        status: "dismissed",
+        dismissReason: null,
+        count: 5,
+      },
     ]);
 
     expect(groups).toHaveLength(2);
@@ -56,8 +80,26 @@ describe("dismissal analytics helpers", () => {
       decided: 40,
       dismissed: 24,
     });
-    // The null bucket is a first-class row, not filtered or renamed.
-    expect(groups[0].rows[0]).toMatchObject({ label: "No reason given", count: 16 });
+    // Only dismissed links carry a reason; confirmed links are counted in
+    // `decided` but must never appear as a "No reason given" dismissal.
+    expect(groups[0].rows.map((row) => row.count).sort((a, b) => a - b)).toEqual([4, 20]);
+    expect(groups[0].rows.some((row) => row.count === 16)).toBe(false);
+  });
+
+  it("counts confirmed links as decided but never lists them as dismissals", () => {
+    const groups = groupReasons([
+      {
+        relationType: "related_to",
+        source: "derived",
+        status: "confirmed",
+        dismissReason: null,
+        count: 7,
+      },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ decided: 7, dismissed: 0 });
+    expect(groups[0].rows).toHaveLength(0);
   });
 });
 
@@ -66,7 +108,9 @@ describe("DismissalAnalytics rendering", () => {
     vi.clearAllMocks();
   });
 
-  const payload = (overrides: Partial<DismissalAnalyticsPayload> = {}): DismissalAnalyticsPayload => ({
+  const payload = (
+    overrides: Partial<DismissalAnalyticsPayload> = {},
+  ): DismissalAnalyticsPayload => ({
     signals: [],
     reasons: [],
     notes: [],
@@ -78,7 +122,13 @@ describe("DismissalAnalytics rendering", () => {
       payload({
         signals: [{ signal: "future_provider_x", decided: 5, dismissed: 0, topReason: null }],
         reasons: [
-          { relationType: "related_to", source: "derived", status: "dismissed", dismissReason: null, count: 2 },
+          {
+            relationType: "related_to",
+            source: "derived",
+            status: "dismissed",
+            dismissReason: null,
+            count: 2,
+          },
         ],
       }),
     );
@@ -99,8 +149,6 @@ describe("DismissalAnalytics rendering", () => {
 
     await userEvent.click(await screen.findByText("Dismissal analytics"));
 
-    expect(
-      await screen.findByText(/No decided links yet/, { exact: false }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No decided links yet/, { exact: false })).toBeInTheDocument();
   });
 });

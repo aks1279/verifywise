@@ -154,3 +154,6 @@ nul
 *.zip
 .dfmt/
 ansible/inventory.ini
+
+# Local agent tooling artifacts (never source)
+.megasaver/

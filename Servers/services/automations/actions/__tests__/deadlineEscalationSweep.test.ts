@@ -72,7 +72,7 @@ beforeEach(() => {
   mockDedup.mockResolvedValue(false);
   mockEmailRisk.mockResolvedValue(undefined);
   mockEmailModelRisk.mockResolvedValue(undefined);
-  mockSlack.mockResolvedValue(undefined);
+  mockSlack.mockResolvedValue({ attempted: true, delivered: true });
 });
 
 describe("runDeadlineEscalationSweep", () => {
@@ -119,9 +119,24 @@ describe("runDeadlineEscalationSweep", () => {
     expect(mockEmailRisk).toHaveBeenCalledWith(
       1, 5, expect.objectContaining({ id: 31 }), DEADLINE_SLACK_DAYS, BASE_URL, false,
     );
-    // Row seen by both legs; each leg notifies owner + admin. The 1-day
-    // in-app records ride inside the Slack leg, so they count as slacked.
+    // Row seen by both legs; each leg notifies owner + admin. Slack delivered,
+    // so the 1-day leg counts as slacked.
     expect(summary).toEqual({ scanned: 2, emailed: 2, slacked: 2 });
+  });
+
+  it("an undelivered Slack still writes the in-app record but counts zero slacked", async () => {
+    const row = riskRow({ deadline: new Date(Date.now() + 1 * DAY) });
+    mockRisks.mockResolvedValue([row]);
+    mockSlack.mockResolvedValue({ attempted: true, delivered: false });
+
+    const summary = await runDeadlineEscalationSweep(1);
+
+    // The durable in-app notice is still written...
+    expect(mockEmailRisk).toHaveBeenCalledWith(
+      1, 5, expect.objectContaining({ id: 31 }), DEADLINE_SLACK_DAYS, BASE_URL, false,
+    );
+    // ...but nothing left the building, so the counter stays honest.
+    expect(summary.slacked).toBe(0);
   });
 
   it("a risk with an existing threshold-7 notice → nothing sent", async () => {

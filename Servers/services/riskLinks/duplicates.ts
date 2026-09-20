@@ -2,6 +2,7 @@ import {
   getDuplicateScanRowsQuery,
   DuplicateScanRow,
 } from "../../utils/riskLink.utils";
+import logger from "../../utils/logger/fileLogger";
 
 /**
  * F7 — Risk duplicate candidate report.
@@ -12,7 +13,18 @@ import {
  * A human reads the report and cleans up by hand (merge executes in phase 2).
  */
 
+/**
+ * Tuned on the 33-risk dev org (528 pairs): noise max 0.23, hand-written
+ * signal 0.27-0.56, 0/2 false positives. The margin is 0.02 with NO large-org
+ * validation — at thousands of risks the noise distribution shifts and
+ * stopword-heavy Jaccard (no stoplist; the/and/for/with survive the len>2
+ * filter) can cross it. Failure direction is fail-by-missing on a human-read
+ * report, which is the safe side. Re-tune on a sampled holdout before raising
+ * MAX_DUPLICATE_SCAN; see the F7 design doc §5.
+ */
 export const DUPLICATE_SIMILARITY_THRESHOLD = 0.25;
+/** Band below the threshold whose pair count is logged for re-tuning. */
+const NEAR_MISS_BAND = 0.05;
 export const MAX_DUPLICATE_SCAN = 2000;
 export const MAX_DUPLICATE_PAIRS = 2000;
 export const MAX_DUPLICATE_RESULTS = 50;
@@ -80,6 +92,7 @@ export async function findDuplicateCandidates(
   const scored: { a: number; b: number; similarity: number; shared: string[] }[] = [];
   let compared = 0;
   let pairCapHit = false;
+  let nearMiss = 0;
 
   for (const bucket of buckets.values()) {
     for (let x = 0; x < bucket.length && !pairCapHit; x++) {
@@ -102,7 +115,10 @@ export async function findDuplicateCandidates(
         compared += 1;
 
         const similarity = jaccard(setA, setB);
-        if (similarity < DUPLICATE_SIMILARITY_THRESHOLD) continue;
+        if (similarity < DUPLICATE_SIMILARITY_THRESHOLD) {
+          if (similarity >= DUPLICATE_SIMILARITY_THRESHOLD - NEAR_MISS_BAND) nearMiss += 1;
+          continue;
+        }
         const shared = [...setA].filter((token) => setB.has(token)).sort();
         scored.push({ a: low, b: high, similarity, shared });
       }
@@ -111,6 +127,12 @@ export async function findDuplicateCandidates(
   }
 
   scored.sort((p, q) => q.similarity - p.similarity || rows[p.a].id - rows[q.a].id);
+
+  if (nearMiss > 0) {
+    logger.info(
+      `duplicate scan org ${organizationId}: ${nearMiss} pairs within ${NEAR_MISS_BAND} below threshold ${DUPLICATE_SIMILARITY_THRESHOLD} (compared ${compared})`,
+    );
+  }
 
   const candidates: DuplicateCandidate[] = scored
     .slice(0, MAX_DUPLICATE_RESULTS)

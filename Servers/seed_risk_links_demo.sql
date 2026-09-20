@@ -273,21 +273,26 @@ VALUES
 -- ------------------------------------------------- Feature 5: evidence freshness
 -- Freshness is OR'd across every evidence mapped to a risk, so each risk id below
 -- appears in exactly one row. Mapping 9503 anywhere else destroys the control case.
+--
+-- AT TIME ZONE 'UTC' is load-bearing on every date here: evidence_hub's
+-- expiry_date/created_at/updated_at are `timestamp WITHOUT time zone` and this
+-- file may load from a non-UTC psql session. A bare NOW() would store session
+-- wall-clock, shifting the 89/91-day boundary controls by the UTC offset.
 INSERT INTO evidence_hub (id, organization_id, evidence_name, evidence_type, description,
                           expiry_date, mapped_risk_ids, created_at, updated_at)
 VALUES
  -- expired, but edited today: must flag on the expiry branch alone
  (9701,1,'Model card - lending scorecard','Documentation','Expired evidence, recently edited.',
-  NOW() - INTERVAL '5 days',   ARRAY[9501], NOW() - INTERVAL '200 days', NOW()),
+  (NOW() AT TIME ZONE 'UTC') - INTERVAL '5 days',   ARRAY[9501], (NOW() AT TIME ZONE 'UTC') - INTERVAL '200 days', (NOW() AT TIME ZONE 'UTC')),
  -- not expired, untouched 91 days: must flag on the 90-day branch alone
  (9702,1,'Fairness test report Q1','Test result','Stale by age, expiry still far out.',
-  NOW() + INTERVAL '200 days', ARRAY[9502], NOW() - INTERVAL '200 days', NOW() - INTERVAL '91 days'),
+  (NOW() AT TIME ZONE 'UTC') + INTERVAL '200 days', ARRAY[9502], (NOW() AT TIME ZONE 'UTC') - INTERVAL '200 days', (NOW() AT TIME ZONE 'UTC') - INTERVAL '91 days'),
  -- 89 days: the control. Risk 9503 must stay CLEAN. If it flags, the boundary is off by one.
  (9703,1,'Data lineage attestation','Attestation','Fresh - one day inside the window.',
-  NOW() + INTERVAL '200 days', ARRAY[9503], NOW() - INTERVAL '200 days', NOW() - INTERVAL '89 days'),
+  (NOW() AT TIME ZONE 'UTC') + INTERVAL '200 days', ARRAY[9503], (NOW() AT TIME ZONE 'UTC') - INTERVAL '200 days', (NOW() AT TIME ZONE 'UTC') - INTERVAL '89 days'),
  -- one stale evidence mapped to two risks: both must flag, two notifications
  (9704,1,'Vendor SOC 2 report','Certification','Stale, shared across two risks.',
-  NOW() + INTERVAL '200 days', ARRAY[9504,9505], NOW() - INTERVAL '200 days', NOW() - INTERVAL '120 days');
+  (NOW() AT TIME ZONE 'UTC') + INTERVAL '200 days', ARRAY[9504,9505], (NOW() AT TIME ZONE 'UTC') - INTERVAL '200 days', (NOW() AT TIME ZONE 'UTC') - INTERVAL '120 days');
 
 -- Sequences must clear the seeded block so app-created rows never collide.
 SELECT setval('verifywise.projects_id_seq',          GREATEST((SELECT COALESCE(MAX(id),0) FROM projects),          9099));

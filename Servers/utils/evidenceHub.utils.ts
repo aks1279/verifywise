@@ -399,3 +399,57 @@ export const getStaleEvidenceRiskIdsQuery = async (
   )) as { risk_id: number }[];
   return rows.map((r) => r.risk_id);
 };
+
+export interface UnnotifiedStaleRiskRow {
+  id: number;
+  risk_name: string;
+  risk_owner: number | null;
+  /** Text (see the stale-link sent-record): reparses losslessly. */
+  evidence_stale_at: string;
+}
+
+/** Flagged risks whose CURRENT staleness the owner has not been told about.
+ *  A failed delivery leaves `evidence_stale_notified_at` behind, so it is
+ *  retried; a later flag moves `evidence_stale_at` past the sent-record. */
+export const getUnnotifiedStaleRisksQuery = async (
+  organizationId: number,
+): Promise<UnnotifiedStaleRiskRow[]> => {
+  const rows = (await sequelize.query(
+    `SELECT id, risk_name, risk_owner,
+            evidence_stale_at::text AS evidence_stale_at
+       FROM risks
+      WHERE organization_id = :organizationId
+        AND is_deleted = false
+        AND evidence_stale_at IS NOT NULL
+        AND (evidence_stale_notified_at IS NULL
+             OR evidence_stale_notified_at < evidence_stale_at)
+      ORDER BY id ASC`,
+    { replacements: { organizationId }, type: QueryTypes.SELECT },
+  )) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    risk_name: row.risk_name,
+    risk_owner: row.risk_owner ?? null,
+    evidence_stale_at: row.evidence_stale_at,
+  }));
+};
+
+/**
+ * Stamp the sent-record for one just-notified risk — only if the flag is still
+ * the value the sweep sent about. Guarded for the same reason as the
+ * stale-link mark: a re-flag between SELECT and UPDATE must not be stamped.
+ */
+export const markEvidenceStaleNotifiedQuery = async (
+  organizationId: number,
+  riskId: number,
+  seenStaleAt: string,
+): Promise<void> => {
+  await sequelize.query(
+    `UPDATE risks
+        SET evidence_stale_notified_at = :seenStaleAt::timestamp
+      WHERE organization_id = :organizationId
+        AND id = :riskId
+        AND evidence_stale_at = :seenStaleAt::timestamp`,
+    { replacements: { organizationId, riskId, seenStaleAt } },
+  );
+};

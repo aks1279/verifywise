@@ -15,6 +15,7 @@ dotenv.config({ quiet: true });
 
 const CRITICAL_PATH_SPECS = /(use-cases|risk-management|tasks|critical-journey)\.spec\.ts/;
 const SUPER_ADMIN_SPECS = /super-admin\.spec\.ts/;
+const RISK_INHERITANCE_SPECS = /risk-inheritance\.spec\.ts/;
 
 // When Playwright's bundled Chromium is not available (e.g. restricted CDN),
 // set PLAYWRIGHT_USE_SYSTEM_CHROME=1 to use the locally installed Google Chrome.
@@ -64,6 +65,24 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         channel: browserChannel,
         storageState: "e2e/.auth/user.json",
+      },
+    },
+    // Risk-inheritance reports: need an org that already has risks, so they
+    // use their own setup and auth state rather than the empty org that
+    // global.setup.ts creates.
+    {
+      name: "risk-inheritance-setup",
+      testMatch: /risk-inheritance\.setup\.ts/,
+      use: { ...devices["Desktop Chrome"], channel: browserChannel },
+    },
+    {
+      name: "risk-inheritance",
+      testMatch: RISK_INHERITANCE_SPECS,
+      dependencies: ["risk-inheritance-setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: browserChannel,
+        storageState: "e2e/.auth/risk-inheritance-admin.json",
       },
     },
     // Critical-journey tests: reuse the stored admin auth state

@@ -1,6 +1,10 @@
 import { sequelize } from "../../../database/db";
 import { getAllOrganizationsQuery } from "../../../utils/organization.utils";
-import { getStaleEvidenceRiskIdsQuery } from "../../../utils/evidenceHub.utils";
+import {
+  getStaleEvidenceRiskIdsQuery,
+  getUnnotifiedStaleRisksQuery,
+  markEvidenceStaleNotifiedQuery,
+} from "../../../utils/evidenceHub.utils";
 import { notifyEvidenceStale } from "../../inAppNotification.service";
 import { recordSnapshotIfChanged } from "../../../utils/history/riskHistory.utils";
 import logger from "../../../utils/logger/fileLogger";
@@ -109,28 +113,26 @@ export async function runEvidenceFreshnessSweep(
           { replacements: { organizationId } },
         )) as [{ id: number }[], number]);
 
-  // Notify only freshly flagged rows — once per transition, not once per
-  // night. A risk with no owner is flagged but not notified.
+  // Notify every flagged risk whose CURRENT staleness the owner has not been
+  // told about — not just the rows flagged this run. A delivery that failed on
+  // a prior run is still unnotified, so it is retried here. A risk with no owner
+  // is stamped without a send so it does not rescan forever.
+  const unnotified = await getUnnotifiedStaleRisksQuery(organizationId);
   let notified = 0;
-  for (const risk of flagged) {
+  for (const risk of unnotified) {
     try {
-      if (risk.risk_owner == null) continue;
-      try {
+      if (risk.risk_owner != null) {
         await notifyEvidenceStale(organizationId, {
           id: risk.id,
           risk_name: risk.risk_name,
           risk_owner: risk.risk_owner,
         });
         notified += 1;
-      } catch (error) {
-        logger.error(
-          `❌ Evidence-stale notification failed for org ${organizationId} risk ${risk.id}:`,
-          error,
-        );
       }
+      await markEvidenceStaleNotifiedQuery(organizationId, risk.id, risk.evidence_stale_at);
     } catch (error) {
       logger.error(
-        `❌ Evidence freshness sweep failed for org ${organizationId} risk ${risk.id}:`,
+        `❌ Evidence-stale notification failed for org ${organizationId} risk ${risk.id}:`,
         error,
       );
     }

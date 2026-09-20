@@ -65,29 +65,43 @@ function toGapRisk(row: CoverageScanRow): CoverageGapRisk {
 export async function findControlCoverage(
   organizationId: number,
 ): Promise<CoverageReport> {
-  const rows = await getCoverageScanRowsQuery(organizationId);
+  // Rows arrive pre-capped per state (worst-first) with honest per-state
+  // totals; the lists are used verbatim and the summary from the totals.
+  // `coverageState` below is the grouping authority — it must agree with the
+  // SQL CASE, and the integration suite pins all three states.
+  const rows = await getCoverageScanRowsQuery(organizationId, MAX_COVERAGE_ROWS);
 
-  // The query returns worst-first; both lists preserve that order (no JS
-  // re-sort). Counts run over ALL rows so they stay honest when capped.
   const gaps: CoverageGapRisk[] = [];
   const noFramework: CoverageGapRisk[] = [];
   let covered = 0;
+  let gapTotal = 0;
+  let noFrameworkTotal = 0;
+  const seenTotals = new Set<string>();
   for (const row of rows) {
-    const state = coverageState(row);
-    if (state === "covered") covered += 1;
-    else if (state === "gap") gaps.push(toGapRisk(row));
-    else noFramework.push(toGapRisk(row));
+    if (coverageState(row) !== row.state) {
+      throw new Error(
+        `coverage state drift: SQL says ${row.state} but coverageState says ${coverageState(row)} for risk ${row.id}`,
+      );
+    }
+    if (!seenTotals.has(row.state)) {
+      seenTotals.add(row.state);
+      if (row.state === "covered") covered = row.state_total;
+      else if (row.state === "gap") gapTotal = row.state_total;
+      else noFrameworkTotal = row.state_total;
+    }
+    if (row.state === "gap") gaps.push(toGapRisk(row));
+    else if (row.state === "no_framework") noFramework.push(toGapRisk(row));
   }
 
   return {
     summary: {
-      total_active_risks: rows.length,
+      total_active_risks: covered + gapTotal + noFrameworkTotal,
       covered,
-      gap: gaps.length,
-      no_framework: noFramework.length,
+      gap: gapTotal,
+      no_framework: noFrameworkTotal,
     },
-    gaps: gaps.slice(0, MAX_COVERAGE_ROWS),
-    no_framework: noFramework.slice(0, MAX_COVERAGE_ROWS),
-    truncated: gaps.length > MAX_COVERAGE_ROWS || noFramework.length > MAX_COVERAGE_ROWS,
+    gaps,
+    no_framework: noFramework,
+    truncated: gapTotal > MAX_COVERAGE_ROWS || noFrameworkTotal > MAX_COVERAGE_ROWS,
   };
 }

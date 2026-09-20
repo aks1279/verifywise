@@ -338,6 +338,22 @@ export async function scheduleDeadlineEscalationSweep() {
   );
 }
 
+export async function scheduleStaleInheritanceNotifySweep() {
+  logger.info("Adding stale-inheritance notification sweep job to the queue...");
+  // Daily at 5:30 AM -- between the 5 AM evidence sweep and the 6 AM AI
+  // detection check. No obliterate: the repeatable add is idempotent by repeat
+  // key.
+  await automationQueue.add(
+    "stale_inheritance_notify_sweep",
+    {},
+    {
+      repeat: { pattern: "30 5 * * *" },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  );
+}
+
 export async function scheduleAiTrustIndexSync() {
   logger.info("Adding AI Trust Index weekly sync job to the queue...");
   // Monday 06:00 UTC. jobId keyed weekly is set at runtime is not needed here;

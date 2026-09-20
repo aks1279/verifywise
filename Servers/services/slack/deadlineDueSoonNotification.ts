@@ -1,4 +1,4 @@
-import { sendSlackNotification } from "./slackNotificationService";
+import { sendSlackNotification, SlackSendResult } from "./slackNotificationService";
 import { SlackNotificationRoutingType } from "../../domain.layer/enums/slack.enum";
 
 export interface DeadlineSlackNotice {
@@ -25,8 +25,8 @@ export interface DeadlineSlackNotice {
 export const sendDeadlineDueSoonSlackNotification = async (
   userId: number,
   notice: DeadlineSlackNotice,
-): Promise<void> => {
-  await sendSlackNotification(
+): Promise<SlackSendResult> => {
+  return sendSlackNotification(
     {
       userId,
       routingType: SlackNotificationRoutingType.EVIDENCE_AND_TASK_ALERTS,

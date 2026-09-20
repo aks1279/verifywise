@@ -18,6 +18,27 @@ import { hierarchyOutputSchema } from "./schema";
 import { candidateKey, CrossEntityCandidate, gatherCrossEntityCandidates } from "./candidates";
 import { MAX_CROSS_ENTITY_CANDIDATES } from "./components";
 
+/**
+ * Wall-clock bound for one direction pass. A provider that accepts the
+ * connection and stalls would otherwise hold a BullMQ job (concurrency 10)
+ * and, on attempts: 3, re-bill two more unbounded waits. AbortSignal.timeout
+ * covers the initial call plus self-correction retries as one deadline.
+ */
+export const DIRECTION_LLM_TIMEOUT_MS = 120_000;
+
+/**
+ * The model's `reason` is persisted to `risk_links.reasons` and surfaced in
+ * the panel and analytics. Strip line breaks and control characters so a
+ * crafted answer cannot smuggle multi-line instructions into stored text.
+ * Length is already bounded by the Zod schema (15-120); this only normalises.
+ */
+export const sanitizeDirectionReason = (reason: string): string =>
+  reason
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[\x00-\x1F\x7F]/g, "")
+    .trim()
+    .slice(0, 120);
+
 export { candidateKey } from "./candidates";
 export type { CrossEntityCandidate } from "./candidates";
 import { HierarchyEdge, validateTwoLevel } from "../hierarchy";
@@ -315,6 +336,7 @@ export async function suggestDirectionForComponent(
       temperature: 0,
       innerMaxRetries: 2,
       maxSelfCorrectionAttempts: 2,
+      extra: { abortSignal: AbortSignal.timeout(DIRECTION_LLM_TIMEOUT_MS) },
     });
     groups = result.object.groups;
   } catch (error) {
@@ -351,29 +373,40 @@ export async function suggestDirectionForComponent(
           id: group.parent_risk_id,
           entityType: group.parent_entity_type,
         }),
-        group.reason,
+        sanitizeDirectionReason(group.reason),
       );
     }
   }
 
   let written = 0;
   for (const edge of edges) {
-    const id = await createAgentHierarchyLinkQuery({
-      organizationId,
-      childRiskId: edge.childRiskId,
-      parent: {
-        id: edge.parentRiskId,
-        entityType: edge.parentEntityType ?? "risk",
-      },
-      reason:
-        reasonByEdge.get(
-          hierarchyPairKey(edge.childRiskId, {
-            id: edge.parentRiskId,
-            entityType: edge.parentEntityType ?? "risk",
-          }),
-        ) ?? "Grouped by the direction agent.",
-    });
-    if (id !== null) written += 1;
+    // Per-edge isolation: a single bad write (transient loss, deadlock,
+    // constraint surprise) must skip that edge, not abort the batch and
+    // re-execute — and re-bill — the whole model pass via the worker retry.
+    try {
+      const id = await createAgentHierarchyLinkQuery({
+        organizationId,
+        childRiskId: edge.childRiskId,
+        parent: {
+          id: edge.parentRiskId,
+          entityType: edge.parentEntityType ?? "risk",
+        },
+        reason:
+          reasonByEdge.get(
+            hierarchyPairKey(edge.childRiskId, {
+              id: edge.parentRiskId,
+              entityType: edge.parentEntityType ?? "risk",
+            }),
+          ) ?? "Grouped by the direction agent.",
+      });
+      if (id !== null) written += 1;
+    } catch (error) {
+      logger.warn(
+        `risk link direction: skipping edge child ${edge.childRiskId} -> parent ${edge.parentRiskId} after write failure: ${
+          (error as Error).message
+        }`,
+      );
+    }
   }
 
   logger.info(

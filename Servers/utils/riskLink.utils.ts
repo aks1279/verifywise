@@ -911,11 +911,12 @@ export async function getDismissalAnalyticsQuery(
      CROSS JOIN LATERAL jsonb_array_elements(
        CASE WHEN jsonb_typeof(l.reasons) = 'array' THEN l.reasons ELSE '[]'::jsonb END
      ) AS e(obj)
-     WHERE l.organization_id = :organizationId
-       AND l.status IN ('confirmed', 'dismissed')
-       AND e.obj->>'signal' IS NOT NULL
-     GROUP BY 1
-     ORDER BY dismissed DESC, 1`,
+      WHERE l.organization_id = :organizationId
+        AND l.status IN ('confirmed', 'dismissed')
+        AND l.source IN ('derived', 'agent')
+        AND e.obj->>'signal' IS NOT NULL
+      GROUP BY 1
+      ORDER BY dismissed DESC, 1`,
     { replacements: { organizationId }, type: QueryTypes.SELECT },
   )) as any[];
 
@@ -925,10 +926,11 @@ export async function getDismissalAnalyticsQuery(
      JOIN risks src ON src.id = l.source_risk_id
                    AND src.organization_id = :organizationId
                    AND src.is_deleted = false
-     WHERE l.organization_id = :organizationId
-       AND l.status IN ('confirmed', 'dismissed')
-     GROUP BY 1, 2, 3, 4
-     ORDER BY 1, 2, 3, count DESC`,
+      WHERE l.organization_id = :organizationId
+        AND l.status IN ('confirmed', 'dismissed')
+        AND l.source IN ('derived', 'agent')
+      GROUP BY 1, 2, 3, 4
+      ORDER BY 1, 2, 3, count DESC`,
     { replacements: { organizationId }, type: QueryTypes.SELECT },
   )) as any[];
 
@@ -1163,6 +1165,25 @@ export async function getModelRiskCandidatesQuery(input: {
   const modelRiskFilter =
     modelRiskIds && modelRiskIds.length > 0 ? `AND mr.id IN (:modelRiskIds)` : "";
 
+  // Project-add triggers announce the whole (risk, model) context, so an
+  // already-announced pair must not consume LIMIT budget starving higher ids.
+  // Suppressed here (not just in JS) so LIMIT applies after dedup. Skipped for
+  // the model-risk-create path, whose novelty is per model-risk and is checked
+  // in JS against a finer-grained sent-record.
+  const announcedFilter =
+    modelRiskIds && modelRiskIds.length > 0
+      ? ""
+      : `AND NOT EXISTS (
+           SELECT 1
+             FROM notifications n
+            WHERE n.organization_id = :organizationId
+              AND n.user_id = r.risk_owner
+              AND n.type = 'model_risk_candidates'
+              AND n.entity_type = 'risk'
+              AND n.entity_id = r.id
+              AND n.metadata->>'model_inventory_id' = :modelInventoryId::text
+         )`;
+
   const rows = await sequelize.query(
     `SELECT r.id                  AS risk_id,
             r.risk_name           AS risk_name,
@@ -1191,8 +1212,11 @@ export async function getModelRiskCandidatesQuery(input: {
                  AND l.source_risk_id       = r.id
                  AND l.target_model_risk_id = mr.id
             )
+        ${announcedFilter}
       GROUP BY r.id, r.risk_name, r.risk_owner
-      ORDER BY r.id
+      -- Ownerless rows last: they can never be notified, so they must not
+      -- occupy LIMIT slots ahead of notifiable risks.
+      ORDER BY (r.risk_owner IS NULL), r.id
       LIMIT :limit`,
     {
       replacements: { organizationId, modelInventoryId, projectIds, modelRiskIds, limit },
@@ -1291,13 +1315,17 @@ export interface CoverageScanRow {
   mitigation_status: string | null;
   control_link_count: number;
   assessment_link_count: number;
-  project_count: number;
   framework_project_count: number;
   projects: { id: number; name: string; has_framework: boolean }[];
+  /** Mirrors coverageState() in services/riskLinks/coverage.ts — keep in sync. */
+  state: "covered" | "gap" | "no_framework";
+  /** Honest per-state total across the whole org, even when capped. */
+  state_total: number;
 }
 
 export async function getCoverageScanRowsQuery(
   organizationId: number,
+  maxRows: number,
 ): Promise<CoverageScanRow[]> {
   const rows = await sequelize.query(
     `WITH control_links AS (
@@ -1321,44 +1349,87 @@ export async function getCoverageScanRowsQuery(
      ),
      assessment_links AS (
        SELECT projects_risks_id AS risk_id FROM answers_eu__risks WHERE organization_id = :organizationId
-     )
-     SELECT r.id,
-            r.risk_name,
-            r.risk_owner,
-            r.risk_level_autocalculated::text AS risk_level,
-            r.mitigation_status::text         AS mitigation_status,
-            (SELECT COUNT(*) FROM control_links cl WHERE cl.risk_id = r.id) AS control_link_count,
-            (SELECT COUNT(*) FROM assessment_links al WHERE al.risk_id = r.id) AS assessment_link_count,
-            (SELECT COUNT(*)
-               FROM projects_risks pr
-              WHERE pr.risk_id = r.id AND pr.organization_id = :organizationId) AS project_count,
-            (SELECT COUNT(DISTINCT pr.project_id)
-               FROM projects_risks pr
-               JOIN projects_frameworks pf
-                 ON pf.project_id = pr.project_id AND pf.organization_id = :organizationId
-              WHERE pr.risk_id = r.id AND pr.organization_id = :organizationId) AS framework_project_count,
-            -- INNER, deliberately: no LEFT JOIN anywhere, so a project-less
-            -- risk resolves to '[]' and lands in no_framework instead of
-            -- inheriting an outer join's NULLs.
-            COALESCE((
-              SELECT json_agg(json_build_object(
+     ),
+     -- Aggregate once and join, instead of one correlated subquery per risk:
+     -- the per-risk form was O(risks x join_table) because the join tables'
+     -- PKs lead with the element id, so a risk_id = r.id predicate forced a
+     -- full index scan for every risk.
+     control_counts AS (
+       SELECT risk_id, COUNT(*) AS n FROM control_links GROUP BY risk_id
+     ),
+     assessment_counts AS (
+       SELECT risk_id, COUNT(*) AS n FROM assessment_links GROUP BY risk_id
+     ),
+     framework_counts AS (
+       SELECT pr.risk_id, COUNT(DISTINCT pr.project_id) AS n
+         FROM projects_risks pr
+         JOIN projects_frameworks pf
+           ON pf.project_id = pr.project_id AND pf.organization_id = :organizationId
+        WHERE pr.organization_id = :organizationId
+        GROUP BY pr.risk_id
+     ),
+     project_lists AS (
+       SELECT pr.risk_id,
+              json_agg(json_build_object(
                 'id', p.id,
                 'name', p.project_title,
                 'has_framework', EXISTS (
                   SELECT 1 FROM projects_frameworks pf
                   WHERE pf.project_id = p.id AND pf.organization_id = :organizationId
                 )
-              ) ORDER BY p.id)
-              FROM projects_risks pr
-              JOIN projects p ON p.id = pr.project_id AND p.organization_id = :organizationId
-              WHERE pr.risk_id = r.id AND pr.organization_id = :organizationId
-            ), '[]') AS projects
-       FROM risks r
-      WHERE r.organization_id = :organizationId
-        AND r.is_deleted = false
-      ORDER BY r.risk_level_autocalculated DESC, r.id ASC`,
+              ) ORDER BY p.id) AS projects
+         FROM projects_risks pr
+         JOIN projects p ON p.id = pr.project_id AND p.organization_id = :organizationId
+        WHERE pr.organization_id = :organizationId
+        GROUP BY pr.risk_id
+     ),
+     scored AS (
+       SELECT r.id,
+              r.risk_name,
+              r.risk_owner,
+              r.risk_level_autocalculated,
+              r.risk_level_autocalculated::text AS risk_level,
+              r.mitigation_status::text         AS mitigation_status,
+              COALESCE(cc.n, 0) AS control_link_count,
+              COALESCE(ac.n, 0) AS assessment_link_count,
+              COALESCE(fc.n, 0) AS framework_project_count,
+              -- A project-less risk has no project_lists row, so it resolves to
+              -- '[]' and lands in no_framework rather than an outer join's NULLs.
+              COALESCE(pl.projects, '[]') AS projects,
+              -- MUST match coverageState() in services/riskLinks/coverage.ts.
+              CASE
+                WHEN COALESCE(cc.n, 0) > 0 THEN 'covered'
+                WHEN COALESCE(fc.n, 0) > 0 THEN 'gap'
+                ELSE 'no_framework'
+              END AS state
+         FROM risks r
+         LEFT JOIN control_counts    cc ON cc.risk_id = r.id
+         LEFT JOIN assessment_counts ac ON ac.risk_id = r.id
+         LEFT JOIN framework_counts  fc ON fc.risk_id = r.id
+         LEFT JOIN project_lists     pl ON pl.risk_id = r.id
+        WHERE r.organization_id = :organizationId
+          AND r.is_deleted = false
+     ),
+     -- Cap per state but keep honest totals: summary counts every row while
+     -- the lists carry only the worst-first window. Without this the report
+     -- materialises every active risk plus its projects JSON on each load.
+     ranked AS (
+       SELECT scored.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY state
+                ORDER BY risk_level_autocalculated DESC NULLS LAST, id ASC
+              ) AS rn,
+              COUNT(*) OVER (PARTITION BY state) AS state_total
+         FROM scored
+     )
+     SELECT id, risk_name, risk_owner, risk_level, mitigation_status,
+            control_link_count, assessment_link_count, framework_project_count,
+            projects, state, state_total
+       FROM ranked
+      WHERE rn <= :maxRows
+      ORDER BY state, rn`,
     {
-      replacements: { organizationId },
+      replacements: { organizationId, maxRows },
       type: QueryTypes.SELECT,
     },
   );
@@ -1371,8 +1442,110 @@ export async function getCoverageScanRowsQuery(
     mitigation_status: row.mitigation_status ?? null,
     control_link_count: toNumber(row.control_link_count),
     assessment_link_count: toNumber(row.assessment_link_count),
-    project_count: toNumber(row.project_count),
     framework_project_count: toNumber(row.framework_project_count),
     projects: Array.isArray(row.projects) ? row.projects : [],
+    state: row.state,
+    state_total: toNumber(row.state_total),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Stale-inheritance lifecycle: acknowledgement + notification sweep
+// ---------------------------------------------------------------------------
+
+export interface StaleChildRow {
+  link_id: number;
+  child_risk_id: number;
+  child_name: string;
+  risk_owner: number | null;
+  organization_id: number;
+  /** The flag value the sweep read; the sent-record must not overwrite a newer one. */
+  parent_changed_at: string;
+}
+
+/**
+ * Clear the "parent level changed" flag on one link, and the sent-record with
+ * it so a later move re-notifies. Org-scoped and idempotent: only a link whose
+ * flag is currently set is touched, so a second click (or a link already
+ * reviewed) is a no-op rather than an error. Returns true when a row changed.
+ */
+export async function acknowledgeParentLevelChangeQuery(
+  organizationId: number,
+  linkId: number,
+): Promise<boolean> {
+  const [, affected] = (await sequelize.query(
+    `UPDATE risk_links
+        SET parent_level_changed_at = NULL,
+            parent_level_notified_at = NULL,
+            updated_at = NOW()
+      WHERE id = :linkId
+        AND organization_id = :organizationId
+        AND parent_level_changed_at IS NOT NULL`,
+    { replacements: { organizationId, linkId } },
+  )) as [unknown, number];
+  return toNumber(affected) > 0;
+}
+
+/**
+ * Confirmed children whose parent level moved and whose owner has not been told
+ * about this particular change yet. `parent_level_notified_at < parent_level_changed_at`
+ * re-arms the notice when the parent moves again after a prior notice.
+ */
+export async function getUnnotifiedStaleChildrenQuery(
+  organizationId: number,
+): Promise<StaleChildRow[]> {
+  const rows = (await sequelize.query(
+    `SELECT l.id AS link_id,
+            l.source_risk_id AS child_risk_id,
+            r.risk_name AS child_name,
+            r.risk_owner,
+            l.organization_id,
+            -- Text, not timestamptz: pg returns a JS Date (ms precision) while
+            -- NOW() stores microseconds, so a Date round-trip would never
+            -- equal the stored value. The text reparses losslessly.
+            l.parent_level_changed_at::text AS parent_changed_at
+       FROM risk_links l
+       JOIN risks r
+         ON r.id = l.source_risk_id
+        AND r.organization_id = l.organization_id
+        AND r.is_deleted = false
+      WHERE l.organization_id = :organizationId
+        AND l.relation_type = 'inherits_from'
+        AND l.status = 'confirmed'
+        AND l.parent_level_changed_at IS NOT NULL
+        AND (l.parent_level_notified_at IS NULL
+             OR l.parent_level_notified_at < l.parent_level_changed_at)
+      ORDER BY l.id ASC`,
+    { replacements: { organizationId }, type: QueryTypes.SELECT },
+  )) as any[];
+  return rows.map((row) => ({
+    link_id: row.link_id,
+    child_risk_id: row.child_risk_id,
+    child_name: row.child_name,
+    risk_owner: row.risk_owner ?? null,
+    organization_id: row.organization_id,
+    parent_changed_at: row.parent_changed_at,
+  }));
+}
+
+/**
+ * Stamp the sent-record for one just-notified link — but only if the flag is
+ * still the value the sweep sent about. A parent move landing between the
+ * sweep's SELECT and this UPDATE advances `parent_level_changed_at`; stamping
+ * it as notified would silently drop the new warning, so the write is a no-op
+ * then and the next run retries.
+ */
+export async function markParentLevelNotifiedQuery(
+  organizationId: number,
+  linkId: number,
+  seenChangedAt: string,
+): Promise<void> {
+  await sequelize.query(
+    `UPDATE risk_links
+        SET parent_level_notified_at = :seenChangedAt::timestamptz
+      WHERE organization_id = :organizationId
+        AND id = :linkId
+        AND parent_level_changed_at = :seenChangedAt::timestamptz`,
+    { replacements: { organizationId, linkId, seenChangedAt } },
+  );
 }

@@ -143,4 +143,12 @@ describe("GET /api/riskLinks/duplicates", () => {
     ];
     expect(new Set(ids)).toEqual(new Set([aA, bA]));
   });
+
+  it("denies a non-admin the org-wide duplicate report", async () => {
+    const { owner } = await seedTwoTenantContexts(3); // Editor
+
+    const res = await owner.request.get(DUPLICATES_URL);
+
+    expect(res.status).toBe(403);
+  });
 });

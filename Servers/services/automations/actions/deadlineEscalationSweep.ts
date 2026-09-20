@@ -115,7 +115,9 @@ async function sendEmailLeg(
 /**
  * 1-day leg: Slack, plus an in-app row (no email) as the dedup record — the
  * Slack send itself leaves no trace, and without the row the notice would
- * re-fire every night. Slack first: only a delivered notice earns its record.
+ * re-fire every night. The in-app row is the durable notice (Slack is
+ * best-effort); `slacked` counts actual Slack deliveries only, so a silent
+ * Slack outage is visible in the summary instead of hidden behind the record.
  */
 async function sendSlackLeg(
   organizationId: number,
@@ -134,7 +136,7 @@ async function sendSlackLeg(
   );
   if (already) return 0;
   const entityKind = kind === "risk" ? "Risk" : "Model risk";
-  await sendDeadlineDueSoonSlackNotification(recipientId, {
+  const slack = await sendDeadlineDueSoonSlackNotification(recipientId, {
     entityKind,
     entityName: row.entity_name,
     distanceText: distanceText(row.deadline),
@@ -164,7 +166,9 @@ async function sendSlackLeg(
       false,
     );
   }
-  return 1;
+  // Honest count: the in-app record is always written above, but `slacked`
+  // means a Slack message actually left the building.
+  return slack?.delivered === true ? 1 : 0;
 }
 
 /** Sweep one org. Each recipient's write is isolated: log and continue. */

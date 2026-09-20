@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  acknowledgeParentLevelChange,
   createRiskLink,
   getRiskLinks,
   getSharedProjects,
@@ -66,6 +67,16 @@ export function useUpdateRiskLinkStatus(riskId: number) {
       status: RiskLinkStatus;
       dismissal?: { dismissReason: DismissReason; dismissNote?: string };
     }) => updateRiskLinkStatus(id, status, dismissal),
+    onSettled: invalidate,
+  });
+}
+
+/** Clearing a reviewed stale-inheritance warning is a link mutation, so the
+ *  same list invalidation applies. */
+export function useAcknowledgeParentLevelChange(riskId: number) {
+  const invalidate = useInvalidateLinks(riskId);
+  return useMutation({
+    mutationFn: (id: number) => acknowledgeParentLevelChange(id),
     onSettled: invalidate,
   });
 }

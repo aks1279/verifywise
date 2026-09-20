@@ -8,8 +8,28 @@
 -- Relative dates only (NOW() +/- INTERVAL): this feature is entirely about
 -- distance from today, and an absolute date is stale tomorrow. Re-running is
 -- safe -- the same relative dates are simply re-applied.
+--
+-- RUN ORDER: seed_risk_links_demo.sql MUST run first. This file only UPDATEs
+-- rows that seed owns; on an unseeded DB both UPDATEs touch 0 rows and the
+-- file COMMITs a silent no-op, leaving the F9 demo empty with no error.
 SET search_path TO verifywise, public;
 BEGIN;
+
+-- Fail fast when the RUN ORDER above was not followed: without the links
+-- seed there is nothing to update, and an empty COMMIT would pass for success.
+DO $$
+DECLARE
+  _risks integer;
+  _model_risks integer;
+BEGIN
+  SELECT count(*) INTO _risks FROM risks
+   WHERE id IN (9501, 9505, 9530, 9502) AND organization_id = 1;
+  SELECT count(*) INTO _model_risks FROM model_risks
+   WHERE id = 9201 AND organization_id = 1;
+  IF _risks <> 4 OR _model_risks <> 1 THEN
+    RAISE EXCEPTION 'seed_risk_deadlines_demo.sql requires risks 9501/9505/9530/9502 and model_risk 9201: run seed_risk_links_demo.sql first (found % risks, % model_risks)', _risks, _model_risks;
+  END IF;
+END $$;
 
 -- 9501: NOW() + 7 days  -> the email threshold (in-app + email)
 -- 9505: NOW() + 1 day   -> the Slack threshold

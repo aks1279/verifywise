@@ -1,4 +1,4 @@
-import { findControlCoverage, MAX_COVERAGE_ROWS } from "../coverage";
+import { coverageState, findControlCoverage, MAX_COVERAGE_ROWS } from "../coverage";
 import { getCoverageScanRowsQuery, CoverageScanRow } from "../../../utils/riskLink.utils";
 
 jest.mock("../../../utils/riskLink.utils", () => ({
@@ -7,18 +7,27 @@ jest.mock("../../../utils/riskLink.utils", () => ({
 
 const mockQuery = getCoverageScanRowsQuery as jest.Mock;
 
-const row = (overrides: Partial<CoverageScanRow> & { id: number }): CoverageScanRow => ({
-  risk_name: "Risk",
-  risk_owner: 5,
-  risk_level: "High risk",
-  mitigation_status: "In Progress",
-  control_link_count: 0,
-  assessment_link_count: 0,
-  project_count: 1,
-  framework_project_count: 0,
-  projects: [{ id: 11, name: "P", has_framework: false }],
-  ...overrides,
-});
+const row = (
+  overrides: Partial<CoverageScanRow> & { id: number },
+): CoverageScanRow => {
+  const base: CoverageScanRow = {
+    risk_name: "Risk",
+    risk_owner: 5,
+    risk_level: "High risk",
+    mitigation_status: "In Progress",
+    control_link_count: 0,
+    assessment_link_count: 0,
+    framework_project_count: 0,
+    projects: [{ id: 11, name: "P", has_framework: false }],
+    state: "no_framework",
+    state_total: 1,
+    ...overrides,
+  };
+  // Keep the fixture honest: state must match what coverageState computes,
+  // just like the SQL CASE must.
+  base.state = coverageState(base);
+  return base;
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -91,7 +100,6 @@ describe("findControlCoverage", () => {
     mockQuery.mockResolvedValue([
       row({
         id: 1,
-        project_count: 2,
         framework_project_count: 1,
         projects: [
           { id: 11, name: "Plain", has_framework: false },
@@ -107,12 +115,14 @@ describe("findControlCoverage", () => {
   });
 
   it("caps the lists but counts every row in the summary", async () => {
+    // SQL returns only the worst-first window with honest per-state totals.
     mockQuery.mockResolvedValue(
-      Array.from({ length: MAX_COVERAGE_ROWS + 1 }, (_, i) =>
+      Array.from({ length: MAX_COVERAGE_ROWS }, (_, i) =>
         row({
           id: i + 1,
           framework_project_count: 1,
           projects: [{ id: 11, name: "P", has_framework: true }],
+          state_total: MAX_COVERAGE_ROWS + 1,
         }),
       ),
     );

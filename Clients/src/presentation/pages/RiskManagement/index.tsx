@@ -840,15 +840,17 @@ const RiskManagement = () => {
               filename="risk-management"
               title="Risk Management"
             />
-            <Tooltip title="Risk inheritance graph">
-              <IconButton
-                onClick={() => navigate("/risk-inheritance")}
-                aria-label="Risk inheritance graph"
-                sx={analyticsIconButtonStyle}
-              >
-                <Network size={16} color={text.secondary} />
-              </IconButton>
-            </Tooltip>
+            {userRoleName === "Admin" && (
+              <Tooltip title="Risk inheritance graph" arrow>
+                <IconButton
+                  onClick={() => navigate("/risk-inheritance")}
+                  aria-label="Risk inheritance graph"
+                  sx={analyticsIconButtonStyle}
+                >
+                  <Network size={16} color={text.secondary} />
+                </IconButton>
+              </Tooltip>
+            )}
             <div data-joyride-id="analytics-button">
               <IconButton
                 onClick={() => setIsAnalyticsDrawerOpen(true)}

@@ -10,7 +10,9 @@ jest.mock("../../services/userNotification/projectNotifications", () => ({
   ProjectRole: {},
 }));
 jest.mock("../../services/slack/slackNotificationService", () => ({
-  sendSlackNotification: jest.fn().mockResolvedValue(undefined),
+  sendSlackNotification: jest
+    .fn()
+    .mockResolvedValue({ attempted: false, delivered: false }),
 }));
 jest.mock("../../services/inAppNotification.service", () => ({
   sendInAppNotification: jest.fn().mockResolvedValue(undefined),
@@ -18,6 +20,7 @@ jest.mock("../../services/inAppNotification.service", () => ({
   notifyTaskAssigned: jest.fn().mockResolvedValue(undefined),
   notifyTaskUpdated: jest.fn().mockResolvedValue(undefined),
   notifyEvidenceStale: jest.fn().mockResolvedValue(undefined),
+  notifyParentLevelChanged: jest.fn().mockResolvedValue(undefined),
   ITaskEntityLinkForEmail: {},
 }));
 

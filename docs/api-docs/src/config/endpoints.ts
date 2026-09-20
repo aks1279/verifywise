@@ -8225,6 +8225,7 @@ export const risklinksEndpoints: Endpoint[] = [
     method: 'GET',
     path: '/riskLinks',
     summary: "Get Risk Graph",
+    description: "Requires role: Admin",
     requiresAuth: true,
     responses: [
       { status: 200, description: "Success" },
@@ -8247,6 +8248,7 @@ export const risklinksEndpoints: Endpoint[] = [
     method: 'GET',
     path: '/riskLinks/dismissals',
     summary: "Get Dismissal Analytics",
+    description: "Requires role: Admin",
     requiresAuth: true,
     responses: [
       { status: 200, description: "Success" },
@@ -8302,6 +8304,17 @@ export const risklinksEndpoints: Endpoint[] = [
     method: 'PATCH',
     path: '/riskLinks/{id}',
     summary: "Update Risk Link Status",
+    requiresAuth: true,
+    responses: [
+      { status: 200, description: "Success" },
+      { status: 500, description: "Internal server error" },
+    ],
+    tag: "RiskLinks",
+  },
+  {
+    method: 'POST',
+    path: '/riskLinks/{id}/acknowledge-parent-change',
+    summary: "Acknowledge Parent Level Change",
     requiresAuth: true,
     responses: [
       { status: 200, description: "Success" },
