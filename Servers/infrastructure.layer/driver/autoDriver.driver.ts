@@ -1,4 +1,8 @@
-import { getData, deleteDemoVendorsData } from "../../utils/autoDriver.utils";
+import {
+  getData,
+  deleteDemoVendorsData,
+  checkOrganizationalProjectExists,
+} from "../../utils/autoDriver.utils";
 import { createEUFrameworkQuery } from "../../utils/eu.utils";
 import { createISOFrameworkQuery } from "../../utils/iso42001.utils";
 import { createAiAppQuery } from "../../utils/aiApp.utils";
@@ -62,7 +66,7 @@ export async function insertMockData(
           last_updated_by: userId,
         },
         [], // no additional members
-        [1, 2], // frameworks: EU AI Act (1) + ISO/IEC 42001 (2)
+        [1], // EU AI Act. ISO/IEC 42001 is organizational, so it can't attach to a use case.
         organizationId,
         userId,
         transaction,
@@ -71,9 +75,33 @@ export async function insertMockData(
       // create eu framework
       await createEUFrameworkQuery(project.id!, true, organizationId, transaction, true);
 
-      // create ISO/IEC 42001 framework — seeds clause/annex implementation
-      // descriptions, auditor feedback and a mix of statuses (is_mock_data=true)
-      await createISOFrameworkQuery(project.id!, true, organizationId, transaction, true);
+      // ISO/IEC 42001 is an organizational framework: it lives on the org's
+      // organizational project, never on a use case. Only create a demo one
+      // when the org has none, so we never add a second ISO 42001 instance next
+      // to the org's real one. deleteMockData removes it with the other demo
+      // projects (deleteProjectByIdQuery clears its framework rows).
+      if ((await checkOrganizationalProjectExists(organizationId, transaction)) === 0) {
+        const orgProject = await createNewProjectQuery(
+          {
+            project_title: "Organizational framework",
+            owner: userId,
+            start_date: new Date(Date.now()),
+            is_organizational: true,
+            goal: "Organization-wide AI management system aligned with ISO/IEC 42001.",
+            last_updated: new Date(Date.now()),
+            last_updated_by: userId,
+          },
+          [],
+          [2], // ISO/IEC 42001
+          organizationId,
+          userId,
+          transaction,
+          true, // is demo
+        );
+        // seeds clause/annex implementation descriptions, auditor feedback and
+        // a mix of statuses (is_mock_data=true)
+        await createISOFrameworkQuery(orgProject.id!, true, organizationId, transaction, true);
+      }
 
       // create project risks
       await createRiskQuery(
